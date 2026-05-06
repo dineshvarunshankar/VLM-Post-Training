@@ -1,3 +1,5 @@
 exports/
 references/
 outputs/
+__pycache__/
+.venv/
