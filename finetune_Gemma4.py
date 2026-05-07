@@ -54,7 +54,7 @@ model = FastModel.get_peft_model(
     finetune_attention_modules = True,  # Attention good for GRPO
     finetune_mlp_modules       = True,  # Should leave on always!
     r = 32,           # Larger = higher accuracy, but might overfit. 32 for 31B model with rich CoT data.
-    lora_alpha = 64,  # Recommended alpha == 2*r for aggressive learning
+    lora_alpha = 32,  # Set alpha=r for 31B models to prevent scaling up unstable gradients
     lora_dropout = 0, # Unsloth optimizes for dropout=0; low overfit risk at 1-2 epochs
     bias = "none",
     random_state = 3407, #a paper proved it was optimal - https://arxiv.org/abs/2109.08203  
@@ -108,7 +108,8 @@ trainer = SFTTrainer(
         warmup_steps=10, # ~10% of total steps
         num_train_epochs=2, #2 epochs helps avoid underfitting with less data
         max_steps=-1, # -1 means use num_train_epochs instead. Set to positive int for testing.
-        learning_rate=2e-5, # Lower LR for 31B model - 1e-4 causes gradient explosions
+        learning_rate=5e-6, # Extremely conservative LR for 31B model to prevent explosion
+        max_grad_norm=0.5,  # Force clip exploding gradients
         logging_steps=1,
         optim="adamw_torch_fused", # Full precision fused AdamW - best for H100. Alt: "adamw_8bit" to save optimizer memory
         weight_decay=0.01, # Standard regularization
