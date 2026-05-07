@@ -3,3 +3,6 @@ references/
 outputs/
 __pycache__/
 .venv/
+unsloth_compiled_cache/
+data.tar
+images.tar

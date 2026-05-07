@@ -1,6 +1,6 @@
 from data_processor import DataProcessor
 from unsloth import FastModel
-from unsloth.chat_templates import get_chat_template, standardize_data_formats, train_on_responses_only
+from unsloth.chat_templates import standardize_data_formats
 from datasets import load_dataset
 from unsloth.trainer import UnslothVisionDataCollator
 from trl import SFTTrainer, SFTConfig
@@ -48,12 +48,11 @@ processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="cosmos")
 ready_file = processor.process_and_save()
 dataset = load_dataset("json", data_files=ready_file, split="train")
 
-#get chatML template - convert to jinja formatting script and inject it into the tokenizer
-# Cosmos-Reason2 is Qwen3-VL based, which uses ChatML format (<|im_start|>/<|im_end|>)
-tokenizer = get_chat_template(
-    tokenizer,
-    chat_template="chatml",
-)
+# NOTE: Do NOT override the chat template for vision models.
+# Cosmos-Reason2 (Qwen3-VL) has a native multimodal-aware chat template 
+# that handles list-format content (images + text). The chatml override
+# replaces it with a text-only version that crashes on multimodal data.
+# The native template already uses <|im_start|>/<|im_end|> tokens.
 
 #standardize data formats
 dataset = standardize_data_formats(dataset)

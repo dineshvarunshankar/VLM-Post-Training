@@ -4,7 +4,7 @@ from trl import SFTTrainer, SFTConfig
 from data_processor import DataProcessor
 from unsloth import FastModel
 from unsloth.trainer import UnslothVisionDataCollator
-from unsloth.chat_templates import get_chat_template, standardize_data_formats
+from unsloth.chat_templates import standardize_data_formats
 from datasets import load_dataset
 import torch
 import os
@@ -68,12 +68,11 @@ processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="gemma4")
 ready_file = processor.process_and_save()
 dataset = load_dataset("json", data_files=ready_file, split="train")
 
-#get gemmma4 template - convert to jinja formatting script and inject it into the tokenizer
-# Gemma-4 thinking template uses <|turn>user/model and <|channel>thought/<channel|> tokens
-tokenizer = get_chat_template(
-    tokenizer,
-    chat_template="gemma-4-thinking",
-)
+# NOTE: Do NOT override the chat template for vision models.
+# Gemma-4's native tokenizer has a multimodal-aware chat template
+# that handles list-format content (images + text). The override
+# replaces it with a text-only version that crashes on multimodal data.
+# The native template already uses <|turn>user/model tokens.
 
 #standardize data formats - Hugging Face JSON to conversational arrays
 dataset = standardize_data_formats(dataset)
