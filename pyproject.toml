@@ -10,5 +10,5 @@ dependencies = [
     "trl",
     "datasets",
     "wandb",
-    "bitsandbytes"
+    "numpy",
 ]

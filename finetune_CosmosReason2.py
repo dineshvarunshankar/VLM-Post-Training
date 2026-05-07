@@ -5,7 +5,7 @@ from datasets import load_dataset
 from unsloth.trainer import UnslothVisionDataCollator
 from trl import SFTTrainer, SFTConfig
 import torch
-import datetime
+from datetime import datetime
 import os
 
 #for wandb project
@@ -18,13 +18,13 @@ model, tokenizer = FastModel.from_pretrained(
     model_name = "nvidia/Cosmos-Reason2-8B",
     dtype = torch.bfloat16, # None for auto detection or torch.float32, torch.float16, torch.bfloat16, etc.
     max_seq_length = 8192, # context window - prompt + image tokens + generated response
-    load_in_4bit = True,  # 4 bit quantization to reduce memory (NF4)
+    load_in_4bit = False,  # 4 bit quantization to reduce memory (NF4) - This IS QLoRA, not LoRA
     load_in_8bit = False, # 8 bit quantization to reduce memory (Q8_0)
-    load_in_16bit = False, # 16 bit quantization(F16)
+    load_in_16bit = True, # True 16-bit LoRA (no quantization on base weights)
     load_in_fp8 = False, # 8 bit quantization(FP8)
     full_finetuning = False, # full finetuning 
     # token = "YOUR_HF_TOKEN", # HF Token for gated models
-    device_map = "balanced", # for equally distributed multi-GPU training. "auto" for auto-find and spread. "cuda:0" for single GPU training.
+    device_map = "auto", # "auto" sufficient for 8B model. "balanced" for multi-GPU, "cuda:0" for single GPU.
     use_gradient_checkpointing = "unsloth" # True or "unsloth" for long context
 )
 model = FastModel.get_peft_model(
@@ -33,22 +33,23 @@ model = FastModel.get_peft_model(
     finetune_language_layers   = True,  # Should leave on!
     finetune_attention_modules = True,  # Attention good for GRPO
     finetune_mlp_modules       = True,  # Should leave on always!
-    r = 16,           # Larger = higher accuracy, but might overfit
-    lora_alpha = 16,  # Recommended alpha == r at least
-    lora_dropout = 0.05,
-    bias = "none",
+    r = 32,           # Larger = higher accuracy, but might overfit
+    lora_alpha = 64,  # Recommended alpha == 2*r for aggressive learning
+    lora_dropout = 0, # Unsloth optimizes for dropout=0
+    bias = "none", # no bias LoRA layers - recommended for LoRA
     random_state = 3407, #a paper proved it was optimal - https://arxiv.org/abs/2109.08203  
-    use_rslora = False,  # rank stabilized LoRA - /sqrt(r)
+    use_rslora = True,  # rank stabilized LoRA - alpha/sqrt(r), improves stability at higher ranks
     loftq_config = None, #  LoftQ - Calculates what was lost during compression and preloads it into LoRA adapter.
     # target_modules = "all-linear", # Optional now! Can specify a list if needed
 )
 
-#Data preparation
-processor = DataProcessor("exports/outputs/sft.jsonl")
+#Data preparation - Cosmos uses <think>/<answer> reasoning format
+processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="cosmos")
 ready_file = processor.process_and_save()
 dataset = load_dataset("json", data_files=ready_file, split="train")
 
 #get chatML template - convert to jinja formatting script and inject it into the tokenizer
+# Cosmos-Reason2 is Qwen3-VL based, which uses ChatML format (<|im_start|>/<|im_end|>)
 tokenizer = get_chat_template(
     tokenizer,
     chat_template="chatml",
@@ -57,7 +58,7 @@ tokenizer = get_chat_template(
 #standardize data formats
 dataset = standardize_data_formats(dataset)
 
-# #apply chat template
+# #apply chat template - flatten the conversations into a single text field - Only for text finetuning
 # def formatting_prompts_func(examples):
 #     convos = examples["conversations"]
 #     texts = [tokenizer.apply_chat_template(convo, tokenize = False, add_generation_prompt = False).removeprefix('<bos>') for convo in convos]
@@ -83,22 +84,26 @@ trainer = SFTTrainer(
     eval_dataset=None,
     args=SFTConfig(
         #dataset_text_field="text", #commented out for vision finetuning
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        warmup_steps=5,
-        num_train_epochs=1,
+        per_device_train_batch_size=2, # 8B model fits batch=2 on H100
+        gradient_accumulation_steps=8, # Effective batch size = 2 * 8 = 16
+        warmup_steps=10, # ~10% of total steps
+        num_train_epochs=2, 
         max_steps=None, # only for testing. set to None if you do full run.
         learning_rate=2e-4,
         logging_steps=1,
-        optim="adamw_8bit",
-        weight_decay=0.001,
-        lr_scheduler_type="linear",
+        optim="adamw_torch_fused", # Full precision fused AdamW(best for H100). use "adamw_8bit" to save optimizer memory
+        weight_decay=0.01, # Standard regularization
+        lr_scheduler_type="cosine", # optional: linear or constant also work
         seed=3407,
+        bf16=True, # only for A100s & H100s
         report_to="wandb",
         run_name=f"cosmos_reason2/lora_{datetime_string}",
         output_dir=f"outputs/cosmos_reason2/lora_{datetime_string}",
 
-        # You MUST put the below items for vision finetuning:
+        save_strategy="steps",
+        save_steps=50,
+        save_total_limit=3,
+
         remove_unused_columns = False, # by default, it looks at text field, if we have images, it would ignore it. Forcing this to false protects images.
         dataset_text_field = "", #stops looking for text field since we have images.
         dataset_kwargs = {"skip_prepare_dataset": True}, # tells HF to skip data processing since unsloth already processed it.
