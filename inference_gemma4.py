@@ -1,97 +1,50 @@
 """
-Inference script for finetuned Gemma-4-31B model.
-
-Supports two modes:
-  1. LoRA adapter: loads base model + adapter weights (slower startup, smaller disk usage)
-  2. Merged model: loads the fused model weights (faster inference, larger disk usage)
-
-Usage:
-  python inference_gemma4.py --image_path path/to/image.jpg --question "Describe the scene"
-  python inference_gemma4.py --image_path path/to/image.jpg --question "Is it safe?" --model_path outputs/gemma_4/lora_YYYYMMDD_HHMMSS/fused_model_weights --merged
+Inference script for finetuned Gemma-4-31B.
+Reads test.jsonl, runs inference, saves predictions to JSON.
 """
 
-import argparse
+import json
+import os
 import torch
-from PIL import Image
 from unsloth import FastModel
-from unsloth.chat_templates import get_chat_template
+
+model_path = "outputs/gemma_4/lora_latest/fused_model_weights"
+test_file = "test/test.jsonl"
+output_file = "test/gemma4_predictions.json"
+max_new_tokens = 8192
 
 
-def load_model(model_path, load_merged=False):
-    """
-    Load the Gemma-4-31B model for inference.
-
-    Args:
-        model_path: Path to either:
-            - LoRA adapter directory (e.g., outputs/gemma_4/lora_.../adapter_weights)
-            - Merged model directory (e.g., outputs/gemma_4/lora_.../fused_model_weights)
-        load_merged: If True, loads a fully merged model. If False, loads base + LoRA adapter.
-    """
-    if load_merged:
-        model, tokenizer = FastModel.from_pretrained(
-            model_name=model_path,
-            dtype=torch.bfloat16,
-            max_seq_length=8192,
-            load_in_4bit=False,
-            load_in_16bit=True,
-            full_finetuning=False,
-            device_map="balanced",  # 31B model requires multi-GPU
-        )
-    else:
-        model, tokenizer = FastModel.from_pretrained(
-            model_name=model_path,
-            dtype=torch.bfloat16,
-            max_seq_length=8192,
-            load_in_4bit=False,
-            load_in_16bit=True,
-            full_finetuning=False,
-            device_map="balanced",
-        )
-
-    # Inject the Gemma-4 thinking template
-    tokenizer = get_chat_template(
-        tokenizer,
-        chat_template="gemma-4-thinking",
+def load_model(model_path):
+    model, tokenizer = FastModel.from_pretrained(
+        model_name=model_path,
+        dtype=torch.bfloat16,
+        max_seq_length=8192,
+        load_in_4bit=False,
+        load_in_16bit=True,
+        full_finetuning=False,
+        device_map="balanced",  # 31B model requires multi-GPU
     )
-
     return model, tokenizer
 
 
-def run_inference(model, tokenizer, image_path, question, max_new_tokens=4096):
-    """
-    Run inference on a single image with a question.
+def run_inference(model, tokenizer, image_path, question):
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "image", "image": image_path},
+            {"type": "text", "text": question},
+        ],
+    }]
 
-    Args:
-        model: The loaded model.
-        tokenizer: The loaded tokenizer with chat template.
-        image_path: Path to the input image (jpg/png).
-        question: The question to ask about the image.
-        max_new_tokens: Maximum number of tokens to generate.
-
-    Returns:
-        str: The model's response (including <|channel>thought/<channel|> blocks).
-    """
-    # Build the message in Unsloth's expected format
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image_path},
-                {"type": "text", "text": question},
-            ],
-        }
-    ]
-
-    # Tokenize with chat template
     inputs = tokenizer.apply_chat_template(
         messages,
-        add_generation_prompt=True,  # Adds <|turn>model\n at the end
+        add_generation_prompt=True,
         return_tensors="pt",
         tokenize=True,
         return_dict=True,
     ).to(model.device)
 
-    # Generate - Gemma-4 recommended settings from Unsloth
+
     with torch.no_grad():
         generated_ids = model.generate(
             **inputs,
@@ -103,51 +56,40 @@ def run_inference(model, tokenizer, image_path, question, max_new_tokens=4096):
             do_sample=True,
         )
 
-    # Trim input tokens from output
     generated_ids_trimmed = [
         out_ids[len(in_ids):]
         for in_ids, out_ids in zip(inputs.input_ids, generated_ids, strict=False)
     ]
 
-    output_text = tokenizer.batch_decode(
+    return tokenizer.batch_decode(
         generated_ids_trimmed,
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
-    )
-
-    return output_text[0]
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Gemma-4-31B Inference")
-    parser.add_argument("--image_path", type=str, required=True, help="Path to input image")
-    parser.add_argument("--question", type=str, required=True, help="Question about the image")
-    parser.add_argument(
-        "--model_path",
-        type=str,
-        default="outputs/gemma_4/lora_latest/adapter_weights",
-        help="Path to LoRA adapter or merged model directory",
-    )
-    parser.add_argument("--merged", action="store_true", help="Set if loading a merged (fused) model instead of LoRA adapter")
-    parser.add_argument("--max_new_tokens", type=int, default=4096, help="Max tokens to generate")
-    args = parser.parse_args()
-
-    print(f"Loading model from: {args.model_path}")
-    model, tokenizer = load_model(args.model_path, load_merged=args.merged)
-
-    print(f"Running inference on: {args.image_path}")
-    print(f"Question: {args.question}")
-    print("-" * 60)
-
-    response = run_inference(
-        model, tokenizer,
-        image_path=args.image_path,
-        question=args.question,
-        max_new_tokens=args.max_new_tokens,
-    )
-
-    print(response)
+    )[0]
 
 
 if __name__ == "__main__":
-    main()
+    print(f"Loading model from: {model_path}")
+    model, tokenizer = load_model(model_path)
+
+    with open(test_file, 'r') as f:
+        samples = [json.loads(line) for line in f if line.strip()]
+
+    print(f"Running inference on {len(samples)} samples...")
+    results = []
+
+    for i, sample in enumerate(samples):
+        print(f"  [{i+1}/{len(samples)}] {os.path.basename(sample['image'])}")
+        response = run_inference(model, tokenizer, sample['image'], sample['question'])
+
+        results.append({
+            "image": sample['image'],
+            "question": sample['question'],
+            "gt_answer": sample.get('answer', ''),
+            "prediction": response,
+        })
+
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"Done! Results saved to: {output_file}")
