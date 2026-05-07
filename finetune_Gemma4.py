@@ -107,7 +107,7 @@ trainer = SFTTrainer(
         gradient_accumulation_steps=16, # Effective batch size = 1 * 16 = 16
         warmup_steps=10, # ~10% of total steps
         num_train_epochs=2, #2 epochs helps avoid underfitting with less data
-        max_steps=None, # only for testing. set to None if you do full run.
+        max_steps=-1, # -1 means use num_train_epochs instead. Set to positive int for testing.
         learning_rate=1e-4, # Lower LR for 31B model - safer to prevent instability
         logging_steps=1,
         optim="adamw_torch_fused", # Full precision fused AdamW - best for H100. Alt: "adamw_8bit" to save optimizer memory

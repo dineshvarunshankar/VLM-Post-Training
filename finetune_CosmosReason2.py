@@ -87,7 +87,7 @@ trainer = SFTTrainer(
         gradient_accumulation_steps=8, # Effective batch size = 2 * 8 = 16
         warmup_steps=10, # ~10% of total steps
         num_train_epochs=2, 
-        max_steps=None, # only for testing. set to None if you do full run.
+        max_steps=-1, # -1 means use num_train_epochs instead. Set to positive int for testing.
         learning_rate=2e-4,
         logging_steps=1,
         optim="adamw_torch_fused", # Full precision fused AdamW(best for H100). use "adamw_8bit" to save optimizer memory
