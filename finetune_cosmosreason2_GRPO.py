@@ -1,6 +1,13 @@
 import os
 from datetime import datetime
+
+# Keep multi-GPU sharding, but disable TorchDynamo graph compile to avoid
+# cross-device fake-tensor matmul errors in GRPO internals.
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
+
 import torch
+import torch._dynamo
 from datasets import load_dataset
 
 from unsloth import FastModel
@@ -16,6 +23,9 @@ from reward_functions import (
     ConsistencyReward,
     RewardAggregator
 )
+
+# Extra guard: force-disable dynamo inside process as well.
+torch._dynamo.config.disable = True
 
 # For wandb project
 os.environ["WANDB_PROJECT"] = "Triage-VLM-Post-Training"
@@ -35,8 +45,7 @@ model, tokenizer = FastModel.from_pretrained(
     load_in_16bit=True,
     load_in_fp8=False,
     full_finetuning=False,
-    device_map="auto",
-    fix_mistral_regex=True,
+    device_map="balanced",
     use_gradient_checkpointing="unsloth",
     # MUST BE FALSE for thermal images since we must train vision layers
     fast_inference=False 
@@ -116,6 +125,7 @@ training_args = GRPOConfig(
     max_grad_norm=1.0,
     
     # Memory optimization
+    torch_compile=False,
     gradient_checkpointing=True,
     remove_unused_columns=False,
 )
