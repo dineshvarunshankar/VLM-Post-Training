@@ -88,7 +88,7 @@ if __name__ == "__main__":
             "image": sample['image'],
             "question": sample['question'],
             "gt_answer": sample.get('answer', ''),
-            "prediction": response,
+            "prediction_cot": response,
             "gt_cot": sample.get('cot', ''),
         })
 

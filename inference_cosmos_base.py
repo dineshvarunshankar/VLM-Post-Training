@@ -89,7 +89,7 @@ if __name__ == "__main__":
     print(f"Running base inference on {len(samples)} samples...")
     for i, sample in enumerate(samples):
         print(f"  [{i+1}/{len(samples)}] {os.path.basename(sample['image'])}")
-        rows[i]["base"] = run_inference(
+        rows[i]["base_cot"] = run_inference(
             model, tokenizer, sample["image"], sample["question"]
         )
 

@@ -86,11 +86,11 @@ if __name__ == "__main__":
     print(f"Running no-CoT inference on {len(samples)} samples...")
     for i, sample in enumerate(samples):
         print(f"  [{i+1}/{len(samples)}] {os.path.basename(sample['image'])}")
-        rows[i]["no_cot_prediction"] = run_inference(
+        rows[i]["prediction_no_cot"] = run_inference(
             model, tokenizer, sample["image"], sample["question"]
         )
 
     outp = Path(predictions_file)
     outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    print(f"Done! Wrote {len(rows)} rows with no_cot_prediction to: {predictions_file}")
+    print(f"Done! Wrote {len(rows)} rows with prediction_no_cot to: {predictions_file}")
