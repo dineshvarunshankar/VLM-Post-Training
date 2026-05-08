@@ -9,3 +9,4 @@ images.tar
 test/
 wandb/
 .kiro/
+testing_exports/
