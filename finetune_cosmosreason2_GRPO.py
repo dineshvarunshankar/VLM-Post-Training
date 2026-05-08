@@ -15,6 +15,7 @@ from reward_functions import (
     AnswerCorrectnessReward,
     BboxAccuracyReward,
     ConsistencyReward,
+    AnswerDiversityReward,
     RewardAggregator
 )
 
@@ -69,10 +70,11 @@ reward_system = RewardAggregator(
         FormatReward(),
         AnswerCorrectnessReward(),
         BboxAccuracyReward(),
-        ConsistencyReward()
+        ConsistencyReward(),
+        AnswerDiversityReward(),
     ],
     # Correctness dominates, while bbox/format/consistency still provide GRPO signal.
-    weights=[1.0, 6.0, 2.0, 0.5],
+    weights=[0.0, 6.0, 1.5, 0.5, 1.0],
     normalize=True,
 )
 
@@ -84,7 +86,7 @@ def aggregated_reward_func(prompts, completions, **kwargs):
 training_args = GRPOConfig(
     output_dir=f"outputs/cosmos_grpo/{datetime_string}",
     num_train_epochs=2,
-    num_generations=16,
+    num_generations=8,
     per_device_train_batch_size=1,
     gradient_accumulation_steps=16,
     learning_rate=5e-6,
@@ -98,21 +100,21 @@ training_args = GRPOConfig(
     # GRPO specific
     use_vllm=False,  # Cannot use vLLM with vision LoRA
     max_prompt_length=6144,
-    max_completion_length=10240,
-    beta=0.001,
+    max_completion_length=2048,
+    beta=0.01,
     loss_type="bnpo", # Bayesian Non-Parametric Policy Optimization
     #loss_type="dr_grpo" # GSPO
     temperature=1.0,
     top_p=1.0,
     #importance_sampling_level= "sequence", #GSPO
     # mask_truncated_completions=False #GSPO
-    log_completions=True,
+    log_completions=False,
     
     # Optimizer
     optim="adamw_torch_fused",
     weight_decay=0.01,
     lr_scheduler_type="cosine",
-    warmup_steps=20,
+    warmup_steps=50,
     max_grad_norm=1.0,
     
     # Memory optimization
@@ -162,4 +164,4 @@ with safe_open(f"outputs/cosmos_grpo/{datetime_string}/adapter_weights/adapter_m
     for key in f.keys():
         tensor = f.get_tensor(key)
         n_zeros = (tensor == 0).sum() / tensor.numel()
-        assert(n_zeros.item() != tensor.numel())
+        assert n_zeros.item() != tensor.numel(), f"Tensor {key} is all zeros — LoRA did not train"
