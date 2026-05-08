@@ -110,7 +110,7 @@ class AnswerCorrectnessReward(RewardFunction):
                 correct_answer = ground_truth_answer(gt)
 
                 if not predicted_answer or not correct_answer:
-                    reward = 0.0
+                    reward = -1.0
                 elif predicted_answer == correct_answer:
                     reward = 1.0
                 else:
@@ -118,7 +118,7 @@ class AnswerCorrectnessReward(RewardFunction):
                 rewards.append(reward)
             except Exception as e:
                 logger.error(f"Error in AnswerCorrectnessReward: {e}")
-                rewards.append(0.0)
+                rewards.append(-1.0)
         return rewards
 
 
@@ -137,7 +137,7 @@ class BboxAccuracyReward(RewardFunction):
         box1_area = (x1_max - x1_min) * (y1_max - y1_min)
         box2_area = (x2_max - x2_min) * (y2_max - y2_min)
         union_area = box1_area + box2_area - inter_area
-        return inter_area / union_area if union_area > 0 else 0.0
+        return inter_area / union_area if union_area > 0 else -0.5
 
     def __call__(self, completions: list[Any], **kwargs) -> list[float]:
         ground_truths = normalize_ground_truths(kwargs.get("ground_truth", []))
@@ -148,26 +148,34 @@ class BboxAccuracyReward(RewardFunction):
                 text = extract_completion_text(completion)
                 think_text = extract_tag(text, "think")
                 if not think_text or not isinstance(gt, dict) or "subject_bbox" not in gt:
-                    rewards.append(0.0)
+                    rewards.append(-0.5)
                     continue
 
                 bbox_match = BBOX_PATTERN.search(think_text)
                 if not bbox_match:
-                    rewards.append(0.0)
+                    rewards.append(-0.5)
                     continue
 
                 predicted_bbox = [float(bbox_match.group(i)) for i in range(1, 5)]
                 ground_truth_bbox = gt["subject_bbox"]
                 if len(ground_truth_bbox) != 4:
-                    rewards.append(0.0)
+                    rewards.append(-1.0)
                     continue
 
                 x1, y1, x2, y2 = predicted_bbox
                 if min(predicted_bbox) < 0 or x1 >= x2 or y1 >= y2:
-                    rewards.append(-0.5)
+                    rewards.append(-1.0)
                     continue
 
-                rewards.append(self.calculate_iou(predicted_bbox, ground_truth_bbox))
+                iou = self.calculate_iou(predicted_bbox, ground_truth_bbox)
+                if iou < 0.2:
+                    rewards.append(-0.3)
+                elif iou < 0.5:
+                    rewards.append(0.2)
+                elif iou <= 0.75:
+                    rewards.append(0.6)
+                else:
+                    rewards.append(1.0)
             except Exception as e:
                 logger.error(f"Error in BboxAccuracyReward: {e}")
                 rewards.append(0.0)

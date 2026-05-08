@@ -4,7 +4,7 @@ import torch
 from datasets import load_dataset
 
 from unsloth import FastModel
-
+from safetensors import safe_open
 from unsloth.chat_templates import standardize_data_formats
 from trl import GRPOConfig, GRPOTrainer
 
@@ -23,9 +23,11 @@ os.environ["WANDB_PROJECT"] = "Triage-VLM-Post-Training"
 # Datetime string
 datetime_string = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-print("Loading model...")
+#sft model path
+model_path = "outputs/cosmos_reason2/lora_20260507_124402/fused_model_weights"
+
 model, tokenizer = FastModel.from_pretrained(
-    model_name="nvidia/Cosmos-Reason2-8B",
+    model_name=model_path,
     dtype=torch.bfloat16,
     max_seq_length=16384,
     load_in_4bit=False,
@@ -39,7 +41,7 @@ model, tokenizer = FastModel.from_pretrained(
     fast_inference=False 
 )
 
-print("Setting up PEFT model...")
+
 model = FastModel.get_peft_model(
     model,
     # MUST BE TRUE to adapt to thermal images
@@ -55,13 +57,12 @@ model = FastModel.get_peft_model(
     use_rslora=True,
 )
 
-print("Preparing GRPO dataset...")
 processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="cosmos")
 ready_file = processor.process_for_grpo()
 dataset = load_dataset("json", data_files=ready_file, split="train")
 dataset = standardize_data_formats(dataset)
 
-print("Setting up Reward System...")
+
 reward_system = RewardAggregator(
     reward_functions=[
         FormatReward(),
@@ -74,7 +75,6 @@ reward_system = RewardAggregator(
     normalize=True,
 )
 
-print("Configuring GRPO Trainer...")
 training_args = GRPOConfig(
     output_dir=f"outputs/cosmos_grpo/{datetime_string}",
     num_train_epochs=2,
@@ -94,9 +94,12 @@ training_args = GRPOConfig(
     max_prompt_length=8192,
     max_completion_length=8192,
     beta=0.001,
-    loss_type="bnpo",
+    loss_type="bnpo", # Bayesian Non-Parametric Policy Optimization
+    #loss_type="dr_grpo" # GSPO
     temperature=1.0,
     top_p=1.0,
+    #importance_sampling_level= "sequence", #GSPO
+    # mask_truncated_completions=False #GSPO
     log_completions=True,
     
     # Optimizer
@@ -126,7 +129,6 @@ max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
 print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
 print(f"{start_gpu_memory} GB of memory reserved.")
 
-print("Starting training...")
 trainer_stats = trainer.train()
 
 # Memory stats - final
@@ -142,10 +144,16 @@ print(f"Peak reserved memory % of max memory = {used_percentage} %.")
 print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.")
 
 # Save the model
-print("Saving model...")
 model.save_pretrained(f"outputs/cosmos_grpo/{datetime_string}/adapter_weights")
 tokenizer.save_pretrained(f"outputs/cosmos_grpo/{datetime_string}/tokenizer_weights")
 
 # Saving to float16 for VLLM
 model.save_pretrained_merged(f"outputs/cosmos_grpo/{datetime_string}/fused_model_weights", tokenizer)
-print("Finished!")
+
+#verify LoRA is actually trained
+tensors = {}
+with safe_open(f"outputs/cosmos_grpo/{datetime_string}/adapter_weights/adapter_model.safetensors", framework="pt") as f:
+    for key in f.keys():
+        tensor = f.get_tensor(key)
+        n_zeros = (tensor == 0).sum() / tensor.numel()
+        assert(n_zeros.item() != tensor.numel())

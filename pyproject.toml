@@ -11,4 +11,5 @@ dependencies = [
     "datasets",
     "wandb",
     "numpy",
+    "safetensors",
 ]

@@ -25,9 +25,10 @@ def load_model(model_path):
 def run_inference(model, tokenizer, image_path, question):
 
     reasoning_prompt = (
-        f"{question} Answer the question using the following format:\n\n"
-        "<think>\nFirst, output the bounding box coordinates of the subject in the green box. Then, provide your step-by-step reasoning.\n</think>\n\n"
-        "<answer>\nYour final answer.\n</answer>"
+        f"{question} Answer the question using the following exact format:\n\n"
+        "<think>\n[Provide the subject bounding box as [x1, y1, x2, y2], then reason to a yes/no conclusion]\n</think>\n\n"
+        "<answer>\n[Your final answer]\n</answer>"
+        "\n\nThe final answer must be exactly yes or no."
     )
 
     messages = [{
