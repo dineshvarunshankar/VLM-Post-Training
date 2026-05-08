@@ -12,14 +12,14 @@ from unsloth import FastModel
 model_name = "nvidia/Cosmos-Reason2-8B"
 test_file = "test/test.jsonl"
 predictions_file = "test/cosmos_predictions.json"
-max_new_tokens = 8192
+max_new_tokens = 12288
 
 
 def load_model(model_name):
     model, tokenizer = FastModel.from_pretrained(
         model_name=model_name,
         dtype=torch.bfloat16,
-        max_seq_length=8192,
+        max_seq_length=16384,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,

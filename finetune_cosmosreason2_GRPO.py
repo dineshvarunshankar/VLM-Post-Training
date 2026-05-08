@@ -71,7 +71,7 @@ reward_system = RewardAggregator(
         ConsistencyReward()
     ],
     # Correctness dominates, while bbox/format/consistency still provide GRPO signal.
-    weights=[1.0, 6.0, 2.0, 1.0],
+    weights=[1.0, 6.0, 2.0, 0.5],
     normalize=True,
 )
 
@@ -91,8 +91,8 @@ training_args = GRPOConfig(
     
     # GRPO specific
     use_vllm=False,  # Cannot use vLLM with vision LoRA
-    max_prompt_length=8192,
-    max_completion_length=8192,
+    max_prompt_length=6144,
+    max_completion_length=10240,
     beta=0.001,
     loss_type="bnpo", # Bayesian Non-Parametric Policy Optimization
     #loss_type="dr_grpo" # GSPO

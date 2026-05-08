@@ -130,7 +130,8 @@ class DataProcessor:
                             "role": "user",
                             "content": [
                                 {
-                                    "type": "image"
+                                    "type": "image",
+                                    "image": data["image"],
                                 },
                                 {
                                     "type": "text",
@@ -139,7 +140,6 @@ class DataProcessor:
                             ]
                         }
                     ],
-                    "image": data['image'],
                     "ground_truth": {
                         "answer": data.get('answer', ''),
                         "cot": data.get('cot', ''),

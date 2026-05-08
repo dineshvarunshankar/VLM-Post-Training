@@ -6,14 +6,14 @@ from unsloth import FastModel
 model_path = "outputs/cosmos_reason2/lora_20260507_124402/fused_model_weights"
 test_file = "test/test.jsonl"
 output_file = "test/cosmos_predictions.json"
-max_new_tokens = 8192
+max_new_tokens = 12288
 
 
 def load_model(model_path):
     model, tokenizer = FastModel.from_pretrained(
         model_name=model_path,
         dtype=torch.bfloat16,  # NVIDIA: "We have only tested doing inference with BF16 precision."
-        max_seq_length=8192,
+        max_seq_length=16384,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
