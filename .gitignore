@@ -6,3 +6,5 @@ __pycache__/
 unsloth_compiled_cache/
 data.tar
 images.tar
+test/
+wandb/

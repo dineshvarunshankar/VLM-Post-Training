@@ -8,7 +8,7 @@ import os
 import torch
 from unsloth import FastModel
 
-model_path = "outputs/cosmos_reason2/lora_latest/fused_model_weights"
+model_path = "outputs/cosmos_reason2/lora_20260507_124402/fused_model_weights"
 test_file = "test/test.jsonl"
 output_file = "test/cosmos_predictions.json"
 max_new_tokens = 8192
@@ -92,6 +92,7 @@ if __name__ == "__main__":
             "question": sample['question'],
             "gt_answer": sample.get('answer', ''),
             "prediction": response,
+            "gt_cot": sample.get('cot', ''),
         })
 
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
