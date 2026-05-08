@@ -5,11 +5,11 @@ from pathlib import Path
 import torch
 from unsloth import FastModel
 
-# Point this to your no-CoT checkpoint.
-model_path = "outputs/cosmos_reason2_no_cot/lora_20260508_020808/fused_model_weights"
+# Point this to your RL (GRPO) checkpoint.
+model_path = "outputs/cosmos_grpo/REPLACE_WITH_RUN/fused_model_weights"
 test_file = "test/test.jsonl"
 predictions_file = "test/cosmos_predictions.json"
-max_new_tokens = 512
+max_new_tokens = 12288
 
 
 def load_model(model_path):
@@ -21,24 +21,24 @@ def load_model(model_path):
         load_in_16bit=True,
         full_finetuning=False,
         device_map="auto",
-        fullgraph = False, # only if multiple GPUs are used
+        fullgraph=False,  # only if multiple GPUs are used
     )
     return model, tokenizer
 
 
 def run_inference(model, tokenizer, image_path, question):
-    no_cot_prompt = (
-        f"{question} Do not include reasoning or chain-of-thought. "
-        "Answer using exactly this format:\n\n"
-        "<answer>\n[yes or no]\n</answer>\n\n"
-        "The final answer must be exactly yes or no."
+    reasoning_prompt = (
+        f"{question} Answer the question using the following exact format:\n\n"
+        "<think>\n[Provide the subject bounding box as [x1, y1, x2, y2], then reason to a yes/no conclusion]\n</think>\n\n"
+        "<answer>\n[Your final answer]\n</answer>"
+        "\n\nThe final answer must be exactly yes or no."
     )
 
     messages = [{
         "role": "user",
         "content": [
             {"type": "image", "image": image_path},
-            {"type": "text", "text": no_cot_prompt},
+            {"type": "text", "text": reasoning_prompt},
         ],
     }]
 
@@ -55,9 +55,9 @@ def run_inference(model, tokenizer, image_path, question):
             **inputs,
             max_new_tokens=max_new_tokens,
             use_cache=True,
-            temperature=0.2,
+            temperature=0.7,
             top_p=0.9,
-            do_sample=False,
+            do_sample=True,
         )
 
     generated_ids_trimmed = [
@@ -80,17 +80,17 @@ if __name__ == "__main__":
 
     assert len(rows) == len(samples), f"{len(rows)} rows in {predictions_file} vs {len(samples)} jsonl lines"
 
-    print(f"Loading no-CoT model from: {model_path}")
+    print(f"Loading RL model from: {model_path}")
     model, tokenizer = load_model(model_path)
 
-    print(f"Running no-CoT inference on {len(samples)} samples...")
+    print(f"Running RL inference on {len(samples)} samples...")
     for i, sample in enumerate(samples):
         print(f"  [{i+1}/{len(samples)}] {os.path.basename(sample['image'])}")
-        rows[i]["sft_no_cot"] = run_inference(
+        rows[i]["rl_cot"] = run_inference(
             model, tokenizer, sample["image"], sample["question"]
         )
 
     outp = Path(predictions_file)
     outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    print(f"Done! Wrote {len(rows)} rows with sft_no_cot to: {predictions_file}")
+    print(f"Done! Wrote {len(rows)} rows with rl_cot to: {predictions_file}")

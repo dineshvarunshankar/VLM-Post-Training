@@ -71,9 +71,9 @@ def first_existing_key(rows: List[dict], candidates: List[str]) -> Optional[str]
 def gather_models(cosmos_rows: List[dict], gemma_rows: List[dict]) -> Dict[str, Tuple[List[dict], str]]:
     cosmos_candidates = {
         "Cosmos Base": ["base_cot", "base", "cosmos_base"],
-        "Cosmos SFT": ["prediction_cot", "prediction", "cosmos_sft"],
-        "Cosmos RL": ["rl_prediction", "grpo_prediction", "prediction_rl", "cosmos_rl"],
-        "Cosmos SFT no-CoT": ["no_cot_prediction", "prediction_no_cot", "cosmos_no_cot"],
+        "Cosmos SFT": ["sft_cot", "prediction_cot", "prediction", "cosmos_sft"],
+        "Cosmos RL": ["rl_cot", "rl_prediction", "grpo_prediction", "prediction_rl", "cosmos_rl"],
+        "Cosmos SFT no-CoT": ["sft_no_cot", "prediction_no_cot", "no_cot_prediction", "cosmos_no_cot"],
     }
     gemma_candidates = {
         "Gemma-4-31B Base": ["base", "base_cot", "gemma_base"],
