@@ -33,4 +33,4 @@ mkdir -p "$HF_HUB_CACHE" "$WANDB_DIR" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR"
 python inference_cosmos_sft.py
 python inference_cosmos_base.py
 python inference_cosmos_no_cot.py
-#python inference_cosmos_rl.py
+python inference_cosmos_rl.py

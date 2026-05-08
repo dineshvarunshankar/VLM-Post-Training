@@ -1,3 +1,7 @@
+"""
+Base Cosmos-Reason2-8B (HF, no LoRA). Reads predictions JSON in place and adds each row's `base` field back to the same file.
+"""
+
 import json
 import os
 from pathlib import Path
@@ -5,10 +9,9 @@ from pathlib import Path
 import torch
 from unsloth import FastModel
 
-# Point this to your RL (GRPO) checkpoint.
-model_path = "outputs/cosmos_grpo/REPLACE_WITH_RUN/fused_model_weights"
-test_file = "test/test.jsonl"
-predictions_file = "test/cosmos_predictions.json"
+model_name = "nvidia/Cosmos-Reason2-8B"
+test_file = "testing_exports/test.jsonl"
+predictions_file = "testing_exports/cosmos_predictions.json"
 max_new_tokens = 12288
 
 
@@ -21,7 +24,7 @@ def load_model(model_path):
         load_in_16bit=True,
         full_finetuning=False,
         device_map="auto",
-        fullgraph=False,  # only if multiple GPUs are used
+        fullgraph = False, # only if multiple GPUs are used
     )
     return model, tokenizer
 
@@ -80,17 +83,17 @@ if __name__ == "__main__":
 
     assert len(rows) == len(samples), f"{len(rows)} rows in {predictions_file} vs {len(samples)} jsonl lines"
 
-    print(f"Loading RL model from: {model_path}")
-    model, tokenizer = load_model(model_path)
+    print(f"Loading base model from: {model_name}")
+    model, tokenizer = load_model(model_name)
 
-    print(f"Running RL inference on {len(samples)} samples...")
+    print(f"Running base inference on {len(samples)} samples...")
     for i, sample in enumerate(samples):
         print(f"  [{i+1}/{len(samples)}] {os.path.basename(sample['image'])}")
-        rows[i]["rl_cot"] = run_inference(
+        rows[i]["base_cot"] = run_inference(
             model, tokenizer, sample["image"], sample["question"]
         )
 
     outp = Path(predictions_file)
     outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    print(f"Done! Wrote {len(rows)} rows with rl_cot to: {predictions_file}")
+    print(f"Done! Wrote {len(rows)} rows with base to: {predictions_file}")

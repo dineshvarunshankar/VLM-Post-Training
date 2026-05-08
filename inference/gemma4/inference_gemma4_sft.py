@@ -1,42 +1,43 @@
+"""
+Inference script for finetuned Gemma-4-31B.
+Reads test.jsonl, runs inference, saves predictions to JSON.
+"""
+
 import json
 import os
+
 import torch
 from unsloth import FastModel
 
-model_path = "outputs/cosmos_reason2/lora_20260507_124402/fused_model_weights"
-test_file = "test/test.jsonl"
-output_file = "test/cosmos_predictions.json"
-max_new_tokens = 12288
+model_path = "outputs/gemma_4/lora_20260507_135059/checkpoint-50"
+test_file = "testing_exports/test.jsonl"
+output_file = "testing_exports/gemma4_predictions.json"
+max_new_tokens = 8192
 
 
 def load_model(model_path):
     model, tokenizer = FastModel.from_pretrained(
         model_name=model_path,
-        dtype=torch.bfloat16,  # NVIDIA: "We have only tested doing inference with BF16 precision."
-        max_seq_length=16384,
+        dtype=torch.bfloat16,
+        max_seq_length=8192,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
-        device_map="auto",
-        fullgraph = False, # only if multiple GPUs are used
+        device_map="balanced",  # 31B model requires multi-GPU
     )
     return model, tokenizer
 
 
 def run_inference(model, tokenizer, image_path, question):
-
-    reasoning_prompt = (
-        f"{question} Answer the question using the following exact format:\n\n"
-        "<think>\n[Provide the subject bounding box as [x1, y1, x2, y2], then reason to a yes/no conclusion]\n</think>\n\n"
-        "<answer>\n[Your final answer]\n</answer>"
-        "\n\nThe final answer must be exactly yes or no."
+    prompt_instruction = (
+        f"{question} First, identify and output the bounding box coordinates of the subject in the green box. Then, provide your step-by-step reasoning before answering."
     )
 
     messages = [{
         "role": "user",
         "content": [
             {"type": "image", "image": image_path},
-            {"type": "text", "text": reasoning_prompt},
+            {"type": "text", "text": prompt_instruction},
         ],
     }]
 
@@ -48,13 +49,15 @@ def run_inference(model, tokenizer, image_path, question):
         return_dict=True,
     ).to(model.device)
 
+
     with torch.no_grad():
         generated_ids = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
             use_cache=True,
-            temperature=0.7,
-            top_p=0.9,
+            temperature=1.0,
+            top_p=0.95,
+            top_k=64,
             do_sample=True,
         )
 
@@ -88,8 +91,7 @@ if __name__ == "__main__":
             "image": sample['image'],
             "question": sample['question'],
             "gt_answer": sample.get('answer', ''),
-            "sft_cot": response,
-            "gt_cot": sample.get('cot', ''),
+            "prediction": response,
         })
 
     os.makedirs(os.path.dirname(output_file), exist_ok=True)

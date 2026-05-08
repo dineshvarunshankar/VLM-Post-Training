@@ -1,7 +1,3 @@
-"""
-Base Cosmos-Reason2-8B (HF, no LoRA). Reads predictions JSON in place and adds each row's `base` field back to the same file.
-"""
-
 import json
 import os
 from pathlib import Path
@@ -9,15 +5,16 @@ from pathlib import Path
 import torch
 from unsloth import FastModel
 
-model_name = "nvidia/Cosmos-Reason2-8B"
-test_file = "test/test.jsonl"
-predictions_file = "test/cosmos_predictions.json"
-max_new_tokens = 12288
+# Point this to your no-CoT checkpoint.
+model_path = "outputs/cosmos_reason2_no_cot/lora_20260508_020808/fused_model_weights"
+test_file = "testing_exports/test.jsonl"
+predictions_file = "testing_exports/cosmos_predictions.json"
+max_new_tokens = 512
 
 
 def load_model(model_path):
     model, tokenizer = FastModel.from_pretrained(
-        model_name=model_name,
+        model_name=model_path,
         dtype=torch.bfloat16,  # NVIDIA: "We have only tested doing inference with BF16 precision."
         max_seq_length=16384,
         load_in_4bit=False,
@@ -30,18 +27,18 @@ def load_model(model_path):
 
 
 def run_inference(model, tokenizer, image_path, question):
-    reasoning_prompt = (
-        f"{question} Answer the question using the following exact format:\n\n"
-        "<think>\n[Provide the subject bounding box as [x1, y1, x2, y2], then reason to a yes/no conclusion]\n</think>\n\n"
-        "<answer>\n[Your final answer]\n</answer>"
-        "\n\nThe final answer must be exactly yes or no."
+    no_cot_prompt = (
+        f"{question} Do not include reasoning or chain-of-thought. "
+        "Answer using exactly this format:\n\n"
+        "<answer>\n[yes or no]\n</answer>\n\n"
+        "The final answer must be exactly yes or no."
     )
 
     messages = [{
         "role": "user",
         "content": [
             {"type": "image", "image": image_path},
-            {"type": "text", "text": reasoning_prompt},
+            {"type": "text", "text": no_cot_prompt},
         ],
     }]
 
@@ -58,9 +55,9 @@ def run_inference(model, tokenizer, image_path, question):
             **inputs,
             max_new_tokens=max_new_tokens,
             use_cache=True,
-            temperature=0.7,
+            temperature=0.2,
             top_p=0.9,
-            do_sample=True,
+            do_sample=False,
         )
 
     generated_ids_trimmed = [
@@ -83,17 +80,17 @@ if __name__ == "__main__":
 
     assert len(rows) == len(samples), f"{len(rows)} rows in {predictions_file} vs {len(samples)} jsonl lines"
 
-    print(f"Loading base model from: {model_name}")
-    model, tokenizer = load_model(model_name)
+    print(f"Loading no-CoT model from: {model_path}")
+    model, tokenizer = load_model(model_path)
 
-    print(f"Running base inference on {len(samples)} samples...")
+    print(f"Running no-CoT inference on {len(samples)} samples...")
     for i, sample in enumerate(samples):
         print(f"  [{i+1}/{len(samples)}] {os.path.basename(sample['image'])}")
-        rows[i]["base_cot"] = run_inference(
+        rows[i]["sft_no_cot"] = run_inference(
             model, tokenizer, sample["image"], sample["question"]
         )
 
     outp = Path(predictions_file)
     outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    print(f"Done! Wrote {len(rows)} rows with base to: {predictions_file}")
+    print(f"Done! Wrote {len(rows)} rows with sft_no_cot to: {predictions_file}")
