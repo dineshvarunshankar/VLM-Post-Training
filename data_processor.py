@@ -153,6 +153,67 @@ class DataProcessor:
         print(f"[{self.model_type}] GRPO data conversion complete. Saved to: {output_file}")
         return output_file
 
+    def process_and_save_no_cot(self, output_file=None):
+        if output_file is None:
+            output_file = f"outputs/dataset/sft_{self.model_type}_no_cot.jsonl"
+
+        with open(self.input_file, 'r') as f_in, \
+             open(output_file, 'w') as f_out:
+
+            for line in f_in:
+                if not line.strip():
+                    continue
+
+                data = json.loads(line)
+                answer = str(data.get('answer', '')).strip()
+                answer_line = answer.capitalize() if answer else ""
+
+                if self.model_type == "cosmos":
+                    prompt_instruction = (
+                        f"{data['question']} Do not include reasoning or chain-of-thought. "
+                        "Answer using exactly this format:\n\n"
+                        "<answer>\n[yes or no]\n</answer>\n\n"
+                        "The final answer must be exactly yes or no."
+                    )
+                    assistant_text = f"<answer>\n{answer_line}\n</answer>"
+                else:
+                    prompt_instruction = (
+                        f"{data['question']} Answer directly with no explanation or reasoning."
+                    )
+                    assistant_text = f"{answer_line}." if answer_line else ""
+
+                formatted_data = {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "image": data['image']
+                                },
+                                {
+                                    "type": "text",
+                                    "text": prompt_instruction
+                                }
+                            ]
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": assistant_text
+                                }
+                            ]
+                        }
+                    ]
+                }
+
+                f_out.write(json.dumps(formatted_data) + "\n")
+
+        print(f"[{self.model_type}] SFT no-CoT data conversion complete. Saved to: {output_file}")
+        return output_file
+
 
 if __name__ == "__main__":
     # Example usage for both models:

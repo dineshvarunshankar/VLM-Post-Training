@@ -15,15 +15,16 @@ predictions_file = "test/cosmos_predictions.json"
 max_new_tokens = 12288
 
 
-def load_model(model_name):
+def load_model(model_path):
     model, tokenizer = FastModel.from_pretrained(
         model_name=model_name,
-        dtype=torch.bfloat16,
+        dtype=torch.bfloat16,  # NVIDIA: "We have only tested doing inference with BF16 precision."
         max_seq_length=16384,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
         device_map="auto",
+        fullgraph = False, # only if multiple GPUs are used
     )
     return model, tokenizer
 

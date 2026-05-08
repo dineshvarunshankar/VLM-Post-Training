@@ -18,6 +18,7 @@ def load_model(model_path):
         load_in_16bit=True,
         full_finetuning=False,
         device_map="auto",
+        fullgraph = False, # only if multiple GPUs are used
     )
     return model, tokenizer
 
