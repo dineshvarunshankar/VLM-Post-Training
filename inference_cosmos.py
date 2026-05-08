@@ -1,8 +1,3 @@
-"""
-Inference script for finetuned Cosmos-Reason2-8B.
-Reads test.jsonl, runs inference, saves predictions to JSON.
-"""
-
 import json
 import os
 import torch
@@ -31,8 +26,8 @@ def run_inference(model, tokenizer, image_path, question):
 
     reasoning_prompt = (
         f"{question} Answer the question using the following format:\n\n"
-        "<think>\nYour reasoning.\n</think>\n\n"
-        "<answer>\nYour answer.\n</answer>"
+        "<think>\nFirst, output the bounding box coordinates of the subject in the green box. Then, provide your step-by-step reasoning.\n</think>\n\n"
+        "<answer>\nYour final answer.\n</answer>"
     )
 
     messages = [{

@@ -12,4 +12,4 @@ command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh && 
 # export WANDB_API_KEY="your_key_here"
 
 uv sync
-uv run finetune_CosmosReason2.py
+uv run finetune_cosmosreason2_GRPO.py

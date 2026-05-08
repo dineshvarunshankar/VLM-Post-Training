@@ -28,11 +28,15 @@ def load_model(model_path):
 
 
 def run_inference(model, tokenizer, image_path, question):
+    prompt_instruction = (
+        f"{question} First, identify and output the bounding box coordinates of the subject in the green box. Then, provide your step-by-step reasoning before answering."
+    )
+
     messages = [{
         "role": "user",
         "content": [
             {"type": "image", "image": image_path},
-            {"type": "text", "text": question},
+            {"type": "text", "text": prompt_instruction},
         ],
     }]
 

@@ -8,3 +8,4 @@ data.tar
 images.tar
 test/
 wandb/
+.kiro/

@@ -47,6 +47,18 @@ class DataProcessor:
                 answer = data.get('answer', '')
                 reasoning_answer = self._format_reasoning(cot, answer)
 
+                # Create the prompt instructions based on the model type
+                if self.model_type == "cosmos":
+                    prompt_instruction = (
+                        f"{data['question']} Answer the question using the following format:\n\n"
+                        "<think>\nFirst, output the bounding box coordinates of the subject in the green box. Then, provide your step-by-step reasoning.\n</think>\n\n"
+                        "<answer>\nYour final answer.\n</answer>"
+                    )
+                else: # gemma4
+                    prompt_instruction = (
+                        f"{data['question']} First, identify and output the bounding box coordinates of the subject in the green box. Then, provide your step-by-step reasoning before answering."
+                    )
+
                 # Structure into Hugging Face nested dictionary format
                 formatted_data = {
                     "messages": [
@@ -59,7 +71,7 @@ class DataProcessor:
                                 },
                                 {
                                     "type": "text",
-                                    "text": data['question']
+                                    "text": prompt_instruction
                                 }
                             ]
                         },
@@ -80,6 +92,67 @@ class DataProcessor:
                 
         print(f"[{self.model_type}] Data conversion complete. Saved to: {output_file}")
         return output_file
+
+    def process_for_grpo(self, output_file=None):
+        """
+        Reads raw JSONL, wraps each sample into HuggingFace messages format with
+        model-specific reasoning tokens, and preserves ground_truth.
+        """
+        if output_file is None:
+            output_file = f"outputs/dataset/grpo_{self.model_type}.jsonl"
+
+        with open(self.input_file, 'r') as f_in, \
+             open(output_file, 'w') as f_out:
+            
+            for line in f_in:
+                if not line.strip():
+                    continue
+                    
+                data = json.loads(line)
+
+                # Create the prompt instructions based on the model type
+                if self.model_type == "cosmos":
+                    prompt_instruction = (
+                        f"{data['question']} Answer the question using the following exact format:\n\n"
+                        "<think>\n[Provide the subject bounding box as [x1, y1, x2, y2], then reason to a yes/no conclusion]\n</think>\n\n"
+                        "<answer>\n[Your final answer]\n</answer>"
+                        "\n\nThe final answer must be exactly yes or no."
+                    )
+                else: # gemma4
+                    prompt_instruction = (
+                        f"{data['question']} First, provide the bounding box coordinates of the subject in the green box. Then, provide your reasoning on how to solve the question before giving your final answer."
+                    )
+
+                # Structure into Hugging Face nested dictionary format with ground_truth
+                formatted_data = {
+                    "prompt": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image"
+                                },
+                                {
+                                    "type": "text",
+                                    "text": prompt_instruction
+                                }
+                            ]
+                        }
+                    ],
+                    "image": data['image'],
+                    "ground_truth": {
+                        "answer": data.get('answer', ''),
+                        "cot": data.get('cot', ''),
+                        "subject_bbox": data.get('subject_bbox', [])
+                    }
+                }
+                
+                # Write the formatted data as a JSONL string
+                f_out.write(json.dumps(formatted_data) + "\n")
+                
+        print(f"[{self.model_type}] GRPO data conversion complete. Saved to: {output_file}")
+        return output_file
+
 
 if __name__ == "__main__":
     # Example usage for both models:
