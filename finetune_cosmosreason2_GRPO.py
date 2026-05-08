@@ -36,6 +36,7 @@ model, tokenizer = FastModel.from_pretrained(
     load_in_fp8=False,
     full_finetuning=False,
     device_map="auto",
+    fix_mistral_regex=True,
     use_gradient_checkpointing="unsloth",
     # MUST BE FALSE for thermal images since we must train vision layers
     fast_inference=False 
@@ -74,6 +75,11 @@ reward_system = RewardAggregator(
     weights=[1.0, 6.0, 2.0, 0.5],
     normalize=True,
 )
+
+
+def aggregated_reward_func(prompts, completions, **kwargs):
+    """Named wrapper required by TRL/Unsloth GRPOTrainer (expects __name__)."""
+    return reward_system(prompts, completions, **kwargs)
 
 training_args = GRPOConfig(
     output_dir=f"outputs/cosmos_grpo/{datetime_string}",
@@ -119,7 +125,7 @@ trainer = GRPOTrainer(
     processing_class=tokenizer,
     args=training_args,
     train_dataset=dataset,
-    reward_funcs=reward_system,
+    reward_funcs=[aggregated_reward_func],
 )
 
 # Memory stats - initial
