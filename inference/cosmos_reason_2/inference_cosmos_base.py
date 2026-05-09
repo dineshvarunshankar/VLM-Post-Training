@@ -10,8 +10,9 @@ import torch
 from unsloth import FastModel
 
 model_name = "nvidia/Cosmos-Reason2-8B"
-test_file = "testing_exports/test.jsonl"
-predictions_file = "testing_exports/cosmos_predictions.json"
+test_split = "your_test_split"
+test_file = f"data/test/{test_split}/exports/test.jsonl"
+predictions_file = f"data/test/{test_split}/exports/cosmos_predictions.json"
 max_new_tokens = 12288
 
 

@@ -9,7 +9,7 @@ from safetensors import safe_open
 from unsloth.chat_templates import standardize_data_formats
 from trl import GRPOConfig, GRPOTrainer
 
-from data_processor import DataProcessor
+from data.data_processor import DataProcessor
 from reward_functions import (
     FormatReward,
     AnswerCorrectnessReward,
@@ -59,7 +59,10 @@ model = FastModel.get_peft_model(
     use_rslora=True,
 )
 
-processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="cosmos")
+train_split = "your_train_split"
+processor = DataProcessor(
+    f"data/train/{train_split}/cot_annotations/rlvr.jsonl", model_type="cosmos"
+)
 ready_file = processor.process_for_grpo()
 dataset = load_dataset("json", data_files=ready_file, split="train")
 dataset = standardize_data_formats(dataset)

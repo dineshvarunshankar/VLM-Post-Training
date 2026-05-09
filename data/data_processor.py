@@ -1,4 +1,5 @@
 import json
+import os
 
 class DataProcessor:
     """
@@ -31,7 +32,11 @@ class DataProcessor:
         model-specific reasoning tokens, and writes to output JSONL.
         """
         if output_file is None:
-            output_file = f"outputs/dataset/sft_{self.model_type}.jsonl"
+            output_file = f"outputs/formatted_dataset/sft_{self.model_type}.jsonl"
+
+        _out_dir = os.path.dirname(os.path.abspath(output_file))
+        if _out_dir:
+            os.makedirs(_out_dir, exist_ok=True)
 
         with open(self.input_file, 'r') as f_in, \
              open(output_file, 'w') as f_out:
@@ -99,7 +104,11 @@ class DataProcessor:
         model-specific reasoning tokens, and preserves ground_truth.
         """
         if output_file is None:
-            output_file = f"outputs/dataset/grpo_{self.model_type}.jsonl"
+            output_file = f"outputs/formatted_dataset/grpo_{self.model_type}.jsonl"
+
+        _out_dir = os.path.dirname(os.path.abspath(output_file))
+        if _out_dir:
+            os.makedirs(_out_dir, exist_ok=True)
 
         with open(self.input_file, 'r') as f_in, \
              open(output_file, 'w') as f_out:
@@ -155,7 +164,11 @@ class DataProcessor:
 
     def process_and_save_no_cot(self, output_file=None):
         if output_file is None:
-            output_file = f"outputs/dataset/sft_{self.model_type}_no_cot.jsonl"
+            output_file = f"outputs/formatted_dataset/sft_{self.model_type}_no_cot.jsonl"
+
+        _out_dir = os.path.dirname(os.path.abspath(output_file))
+        if _out_dir:
+            os.makedirs(_out_dir, exist_ok=True)
 
         with open(self.input_file, 'r') as f_in, \
              open(output_file, 'w') as f_out:
@@ -216,14 +229,12 @@ class DataProcessor:
 
 
 if __name__ == "__main__":
-    # Example usage for both models:
-    # processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="gemma4")
-    # processor.process_and_save()
-    
-    # processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="cosmos")
-    # processor.process_and_save()
-    
     import sys
+
+    train_split = "your_train_split"
     model_type = sys.argv[1] if len(sys.argv) > 1 else "gemma4"
-    processor = DataProcessor("outputs/dataset/sft.jsonl", model_type=model_type)
+    processor = DataProcessor(
+        f"data/train/{train_split}/cot_annotations/sft.jsonl",
+        model_type=model_type,
+    )
     processor.process_and_save()

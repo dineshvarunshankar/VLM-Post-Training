@@ -1,7 +1,7 @@
 import numpy as np
 import unsloth
 from trl import SFTTrainer, SFTConfig
-from data_processor import DataProcessor
+from data.data_processor import DataProcessor
 from unsloth import FastModel
 from unsloth.trainer import UnslothVisionDataCollator
 from unsloth.chat_templates import standardize_data_formats
@@ -63,8 +63,11 @@ model = FastModel.get_peft_model(
     # target_modules = "all-linear", # Optional now! Can specify a list if needed
 )
 
-#Data preparation - Gemma-4 uses <|channel>thought / <channel|> reasoning format
-processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="gemma4")
+# Data preparation - Gemma-4 uses <|channel>thought / <channel|> reasoning format
+train_split = "your_train_split"
+processor = DataProcessor(
+    f"data/train/{train_split}/cot_annotations/sft.jsonl", model_type="gemma4"
+)
 ready_file = processor.process_and_save()
 dataset = load_dataset("json", data_files=ready_file, split="train")
 

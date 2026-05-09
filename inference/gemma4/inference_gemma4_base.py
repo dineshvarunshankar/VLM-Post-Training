@@ -10,8 +10,9 @@ import torch
 from unsloth import FastModel
 
 model_name = "unsloth/gemma-4-31B-it"
-test_file = "testing_exports/test.jsonl"
-predictions_file = "testing_exports/gemma4_predictions.json"
+test_split = "your_test_split"
+test_file = f"data/test/{test_split}/exports/test.jsonl"
+predictions_file = f"data/test/{test_split}/exports/gemma4_predictions.json"
 max_new_tokens = 8192
 
 

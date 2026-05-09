@@ -5,8 +5,9 @@ import torch
 from unsloth import FastModel
 
 model_path = "outputs/cosmos_reason2/lora_20260507_124402/fused_model_weights"
-test_file = "testing_exports/test.jsonl"
-output_file = "testing_exports/cosmos_predictions.json"
+test_split = "your_test_split"
+test_file = f"data/test/{test_split}/exports/test.jsonl"
+output_file = f"data/test/{test_split}/exports/cosmos_predictions.json"
 max_new_tokens = 12288
 
 

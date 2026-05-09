@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+from datetime import datetime
 from itertools import combinations
 from typing import Dict, List, Optional, Tuple
 
@@ -32,8 +33,10 @@ GEMMA_MODEL_CANDIDATES: Dict[str, List[str]] = {
     "Gemma-4-31B Base": ["base", "base_cot", "gemma_base"],
     "Gemma-4-31B SFT": ["prediction", "prediction_cot", "gemma_sft"],
 }
+# Same test split as in inference/* and data/test/build_*.py.
+test_split = "your_test_split"
 GEMMA_JSON_CANDIDATES = (
-    "test/gemma4_predictions.json",
+    f"data/test/{test_split}/exports/gemma4_predictions.json",
     "testing_exports/gemma4_predictions.json",
 )
 
@@ -326,9 +329,15 @@ def resolve_gemma_path(explicit: Optional[str]) -> Optional[str]:
 
 
 def main() -> None:
+    default_outdir = os.path.join(
+        "plots", "runs", datetime.now().strftime("%Y%m%d_%H%M%S")
+    )
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cosmos-json", default="testing_exports/cosmos_predictions.json")
-    ap.add_argument("--outdir", default="outputs/analysis/OOD_cosmos")
+    ap.add_argument(
+        "--cosmos-json",
+        default=f"data/test/{test_split}/exports/cosmos_predictions.json",
+    )
+    ap.add_argument("--outdir", default=default_outdir)
     ap.add_argument("--gemma-json", default=None)
     args = ap.parse_args()
     cosmos_rows = read_json(args.cosmos_json)

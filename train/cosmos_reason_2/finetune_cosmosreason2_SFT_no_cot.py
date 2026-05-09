@@ -1,4 +1,4 @@
-from data_processor import DataProcessor
+from data.data_processor import DataProcessor
 from unsloth import FastModel
 from unsloth.chat_templates import standardize_data_formats
 from datasets import load_dataset
@@ -43,8 +43,11 @@ model = FastModel.get_peft_model(
     # target_modules = "all-linear", # Optional now! Can specify a list if needed
 )
 
-#Data preparation - Cosmos uses <think>/<answer> reasoning format
-processor = DataProcessor("outputs/dataset/sft.jsonl", model_type="cosmos")
+# Data preparation - Cosmos uses <think>/<answer> reasoning format
+train_split = "your_train_split"
+processor = DataProcessor(
+    f"data/train/{train_split}/cot_annotations/sft.jsonl", model_type="cosmos"
+)
 ready_file = processor.process_and_save_no_cot()
 dataset = load_dataset("json", data_files=ready_file, split="train")
 

@@ -6,6 +6,7 @@
 set -exo pipefail
 
 cd "$SLURM_SUBMIT_DIR"
+export PYTHONPATH="$SLURM_SUBMIT_DIR"
 
 # Load existing conda environment
 source "$HOME/.bashrc"
@@ -27,5 +28,5 @@ export WANDB_CACHE_DIR=/ocean/projects/cis240120p/kandiyap/.cache/wandb/cache
 export WANDB_CONFIG_DIR=/ocean/projects/cis240120p/kandiyap/.cache/wandb/config
 mkdir -p "$HF_HUB_CACHE" "$WANDB_DIR" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR"
 
-python inference_gemma4_sft.py
-python inference_gemma4_base.py
+python inference/gemma4/inference_gemma4_sft.py
+python inference/gemma4/inference_gemma4_base.py

@@ -7,8 +7,9 @@ from unsloth import FastModel
 
 # Point this to your no-CoT checkpoint.
 model_path = "outputs/cosmos_reason2_no_cot/lora_20260508_020808/fused_model_weights"
-test_file = "testing_exports/test.jsonl"
-predictions_file = "testing_exports/cosmos_predictions.json"
+test_split = "your_test_split"
+test_file = f"data/test/{test_split}/exports/test.jsonl"
+predictions_file = f"data/test/{test_split}/exports/cosmos_predictions.json"
 max_new_tokens = 512
 
 

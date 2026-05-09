@@ -2,6 +2,8 @@ data/train/*
 !data/train/.gitkeep
 data/test/*
 !data/test/.gitkeep
+!data/test/build_test_jsonl.py
+!data/test/build_results_md.py
 references/
 outputs/
 __pycache__/

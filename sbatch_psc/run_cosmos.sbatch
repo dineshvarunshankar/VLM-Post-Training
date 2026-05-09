@@ -6,6 +6,7 @@
 set -exo pipefail
 
 cd "$SLURM_SUBMIT_DIR"
+export PYTHONPATH="$SLURM_SUBMIT_DIR"
 
 # Load existing conda environment
 source "$HOME/.bashrc"
@@ -30,7 +31,7 @@ export WANDB_CONFIG_DIR=/ocean/projects/cis240120p/kandiyap/.cache/wandb/config
 mkdir -p "$HF_HUB_CACHE" "$WANDB_DIR" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR"
 
 # Build cosmos_predictions.json with SFT-CoT first, then append others.
-python inference_cosmos_sft.py
-python inference_cosmos_base.py
-python inference_cosmos_no_cot.py
-python inference_cosmos_rl.py
+python inference/cosmos_reason_2/inference_cosmos_sft.py
+python inference/cosmos_reason_2/inference_cosmos_base.py
+python inference/cosmos_reason_2/inference_cosmos_no_cot.py
+python inference/cosmos_reason_2/inference_cosmos_rl.py

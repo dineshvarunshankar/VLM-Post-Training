@@ -7,8 +7,9 @@ from unsloth import FastModel
 
 # Point this to your RL (GRPO) checkpoint.
 model_path = "outputs/cosmos_grpo/20260508_044956/checkpoint-900"
-test_file = "testing_exports/test.jsonl"
-predictions_file = "testing_exports/cosmos_predictions.json"
+test_split = "your_test_split"
+test_file = f"data/test/{test_split}/exports/test.jsonl"
+predictions_file = f"data/test/{test_split}/exports/cosmos_predictions.json"
 max_new_tokens = 12288
 
 
