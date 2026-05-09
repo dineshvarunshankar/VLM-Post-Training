@@ -9,7 +9,7 @@ outputs/
 __pycache__/
 .venv/
 unsloth_compiled_cache/
-test/
+/test/
 wandb/
 slurm_logs/
 *.pyc
