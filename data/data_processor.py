@@ -8,6 +8,8 @@ class DataProcessor:
     Supports multiple model reasoning formats:
         - gemma4: Uses <|channel>thought / <channel|> tokens (Gemma-4 thinking format)
         - cosmos: Uses <think> / </think> and <answer> / </answer> tags (Cosmos-Reason2 / Qwen format)
+    
+    Input JSONL rows must already use repo-root-relative image paths.
     """
 
     reasoning_formats = {
@@ -16,7 +18,6 @@ class DataProcessor:
     }
 
     def __init__(self, input_jsonl_file, model_type):
-       
         self.input_file = input_jsonl_file
         self.model_type = model_type
 
@@ -72,7 +73,7 @@ class DataProcessor:
                             "content": [
                                 {
                                     "type": "image",
-                                    "image": data['image']
+                                    "image": data['image'],
                                 },
                                 {
                                     "type": "text",
@@ -202,7 +203,7 @@ class DataProcessor:
                             "content": [
                                 {
                                     "type": "image",
-                                    "image": data['image']
+                                    "image": data['image'],
                                 },
                                 {
                                     "type": "text",

@@ -5,12 +5,18 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "unsloth",
+    "unsloth>=2026.5.2",
     "torch",
+    "transformers>=5.10.1",
     "trl",
     "datasets",
     "wandb",
     "numpy",
     "safetensors",
     "matplotlib",
+    "torchvision",
 ]
+
+# Unsloth metadata caps transformers<=5.5; Gemma 4 needs >=5.10.1 (works at runtime).
+[tool.uv]
+override-dependencies = ["transformers>=5.10.1"]
