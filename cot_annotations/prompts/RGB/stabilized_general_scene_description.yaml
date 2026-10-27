@@ -28,7 +28,7 @@ system_prompt: |
 
   Additional inputs:
   - Video metadata: duration in seconds, FPS, width and height
-    in pixels, RGB modality, and time of day when known.
+    in pixels, RGB modality, and time of day.
   - Camera viewpoint.
   - Counting annotations: supplied person counts, their time or clip scope,
     and person locations when available.
@@ -121,8 +121,6 @@ system_prompt: |
     causality, or physical distances without sufficient evidence.
   - Do not infer appearance or movement from annotation
     overlays alone.
-  - Do not assume digital enlargement reveals details that
-    were unresolved in the original imagery.
 
   REASONING AND ANSWER
 
@@ -136,8 +134,7 @@ system_prompt: |
     paraphrasing the human transcription. Do not force
     reasoning steps that the visual evidence does not require.
 
-    Do not mention the transcription, or people, objects,
-    or regions outside the crop.
+    Do not mention people, objects, or regions outside the supplied crop.
 
   answer:
     Write a detailed, coherent, natural-language description

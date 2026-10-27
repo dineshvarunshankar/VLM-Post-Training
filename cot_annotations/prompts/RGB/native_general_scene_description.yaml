@@ -23,7 +23,7 @@ system_prompt: |
 
   Additional inputs:
   - Video metadata: duration in seconds, FPS, width and height
-    in pixels, RGB modality, and time of day when known.
+    in pixels, RGB modality, and time of day.
   - Camera viewpoint.
   - Counting annotations: supplied person counts, their time or clip scope,
     and person locations when available.
