@@ -1,6 +1,6 @@
 # Answer-only training
 
-[Repository guide](../../README.md) · [Preprocessing](../preprocess/README.md) · [Verified SFT preflight and limits](PREFLIGHT.md)
+[Repository guide](../../README.md) · [Preprocessing](../preprocess/README.md)
 
 Train RGB video-language models on human medical answers with TRL, Transformers, and PEFT LoRA.
 Choose SFT, RL only, or SFT followed by RL. Medical answers use category JSON with integer `0`/`1` values.
@@ -329,14 +329,9 @@ mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$TRITON_CACHE_DIR" \
   "$TILELANG_CACHE_DIR" "$FLASHINFER_WORKSPACE_BASE"
 ```
 
-On PSC `cntc-gb001`, the GPU 2/3 communication check stalled with the default NCCL transport.
-The same check passed with `NCCL_P2P_DISABLE=1`.
-For that node setup, export this setting before starting training and serving.
-Do not apply this workaround to other nodes without checking their communication paths.
-
 For long native videos, SFT supports `sft.training.activation_offloading: true`.
 This setting does not enable RL activation offloading.
-Check memory with representative clips before a full run; the optimizer-step smoke does not establish worst-case memory use.
+Check memory with representative clips and the configured batch size before a full run.
 
 Allocate separate GPUs for training and the server. Their device sets must not overlap.
 For four server GPUs, the model profiles specify these starting allocations:
@@ -359,7 +354,6 @@ export ROLLOUT_GPU_MEMORY_UTILIZATION=YOUR_CHECKED_FRACTION
 Replace `REVISION` with the downloaded revision. Set `ROLLOUT_MAX_SEQS` from the memory and throughput device check.
 Server concurrency is separate from the training batch size.
 For RL, set `ROLLOUT_MAX_SEQS` to at least `rl.policy.num_generations`.
-A reduced smoke batch does not verify full-batch capacity.
 Check the configured response count and representative video sizes separately.
 Reserve GPU memory for weight-transfer buffers and NCCL communicators when choosing the memory fraction.
 
@@ -368,24 +362,20 @@ Video-geometry checks require this executable, in addition to FFmpeg shared libr
 
 Derive the server's profiling flags from the same run and pinned processor used by training.
 Set `PROFILE_VIDEO_FRAMES` to the verified maximum sampled frame count for the full dataset.
-The frozen PSC answer-only split dated 2026-10-31 has a maximum of 150 frames.
 For Gemma, this bound controls startup profiling; it does not truncate input videos or change sampling.
 Qwen derives its reservation from the whole-video pixel budget and does not use a frame override.
 
 ```bash
 RUN_CONFIG=/path/to/run.yaml
-PROFILE_VIDEO_FRAMES=150
+PROFILE_VIDEO_FRAMES=YOUR_DATASET_MAX_SAMPLED_FRAMES
 ROLLOUT_PROCESSOR_KWARGS="$(uv run --group rl python -m scripts.train.rl.rollout.video_profile --run "$RUN_CONFIG" --profile-video-frames "$PROFILE_VIDEO_FRAMES" --field mm_processor_kwargs)"
 ROLLOUT_MM_LIMITS="$(uv run --group rl python -m scripts.train.rl.rollout.video_profile --run "$RUN_CONFIG" --profile-video-frames "$PROFILE_VIDEO_FRAMES" --field limit_mm_per_prompt)"
 ```
 
 The helper loads processor metadata, not model weights. It does not start a server or training.
 Qwen uses the full configured video pixel budget and disables per-frame pixel capping, matching the training processor.
-For the current budget, its encoder reservation is 122,880 tokens; the frozen metadata maximum is 122,661.
-Gemma uses 280 tokens per frame and a profiling image of 960 × 672 pixels.
-With 150 frames, its reservation is 43,200 tokens, including delimiters and timestamp allowance.
-The updated patch also applies this frame bound to dummy inputs and encoder graph metadata.
-These reservations do not prove GPU capacity or throughput. Run the bounded checks on the selected devices.
+Gemma derives its profiling geometry from the configured per-frame token budget.
+The Gemma patch applies the frame bound to dummy inputs and encoder graph metadata.
 A healthy server with default processor settings can still reject full videos because its encoder cache is too small.
 
 Example server on GPUs 4–7:
