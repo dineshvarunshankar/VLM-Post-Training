@@ -1,6 +1,6 @@
 """Select positive-rich held-out recordings without casualty or view leakage."""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
 import hashlib
@@ -55,6 +55,9 @@ def select_splits(clips, percentage=5, seed=42):
     year_bits = {year: 1 << index for index, year in enumerate(years)}
     cue_names = sorted(set().union(*(clip.observables for clip in clips)))
     cue_bits = {cue: 1 << index for index, cue in enumerate(cue_names)}
+    all_cues = (1 << len(cue_names)) - 1
+    year_totals = Counter(clip.year for clip in clips)
+    year_proportions = [year_totals[year] / len(clips) for year in years]
     stats = []
     for name in names:
         chosen = representatives[name]
@@ -62,10 +65,12 @@ def select_splits(clips, percentage=5, seed=42):
         if len(group_years) != 1:
             raise ValueError(f'Inconsistent year labels within recording: {name}')
         cues = set().union(*(clip.observables for clip in chosen))
+        training_cues = set().union(*(clip.observables for clip in recordings[name]))
         stats.append((len(chosen), sum(len(clip.observables) for clip in chosen),
                       sum(cue_bits[cue] for cue in cues), year_bits[next(iter(group_years))],
                       int(any(clip.assessed_absent for clip in chosen)) |
-                      (2 * int(any(clip.not_assessable for clip in chosen)))))
+                      (2 * int(any(clip.not_assessable for clip in chosen))),
+                      sum(cue_bits[cue] for cue in training_cues)))
     available_assessments = 0
     for stat in stats:
         available_assessments |= stat[4]
@@ -74,8 +79,13 @@ def select_splits(clips, percentage=5, seed=42):
     @lru_cache(maxsize=50000)
     def objective(assignment):
         counts, positives, cues, year_masks, assessments, groups = ([0, 0, 0] for _ in range(6))
+        training_cues = 0
+        year_counts = [[0] * len(years) for _ in range(3)]
         for destination, stat in zip(assignment, stats):
-            count, positive, cue, year, assessment = stat
+            count, positive, cue, year, assessment, train_cue = stat
+            if destination == 0:
+                training_cues |= train_cue
+            year_counts[destination][year.bit_length() - 1] += count
             counts[destination] += count
             positives[destination] += positive
             cues[destination] |= cue
@@ -84,8 +94,10 @@ def select_splits(clips, percentage=5, seed=42):
             groups[destination] += 1
         missing_years = sum(len(years) - year_masks[i].bit_count() for i in (1, 2))
         missing_assessments = sum((available_assessments & ~assessments[i]).bit_count() for i in (1, 2))
-        return (sum(n == 0 for n in groups), missing_years,
-                abs(counts[1] - target) + abs(counts[2] - target), missing_assessments,
+        year_imbalance = sum(abs(year_counts[i][j] / max(1, counts[i]) - proportion)
+                             for i in (1, 2) for j, proportion in enumerate(year_proportions))
+        return (sum(n == 0 for n in groups), (all_cues & ~training_cues).bit_count(), missing_years,
+                abs(counts[1] - target) + abs(counts[2] - target), missing_assessments, year_imbalance,
                 -min(positives[i] / max(1, counts[i]) for i in (1, 2)),
                 -sum(positives[1:]), -sum(cues[i].bit_count() for i in (1, 2)),
                 -sum(groups[1:]))

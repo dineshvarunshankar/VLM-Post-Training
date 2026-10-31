@@ -1,81 +1,54 @@
 # Answer-only training
 
-[Repository guide](../../README.md) · [Preprocessing](../preprocess/README.md) · [CoT generation](../cot/README.md)
+[Repository guide](../../README.md) · [Preprocessing](../preprocess/README.md)
 
-Train RGB video models from human answers with TRL, Transformers, and PEFT LoRA.
-Medical VQA targets contain category JSON with integer `0`/`1` values. Thinking is disabled.
-CoT annotations are not required for these recipes.
+Train RGB video-language models on human medical answers with TRL, Transformers, and PEFT LoRA.
+Choose SFT, RL only, or SFT followed by RL. Medical answers use category JSON with integer `0`/`1` values.
 
-## 1. Choose a run YAML
+## Requirements
 
-Use one complete YAML per run. Copy an example within the same directory:
+- Complete the [repository installation](../../README.md#installation).
+- Prepare videos and human-answer targets on the data server.
+- Provide local storage for data, base weights, checkpoints, and exported models on the training machine.
+- Allocate NVIDIA GPUs for training and a separate vLLM server.
 
-```bash
-cp scripts/train/configs/runs/qwen9b_stabilized_medical.yaml scripts/train/configs/runs/my_run.yaml
-```
+Run commands from the repository root. Use one YAML file to configure each run.
 
-| Example | Model | Videos | Tasks |
-|---|---|---|---|
-| [qwen9b_stabilized_medical.yaml](configs/runs/qwen9b_stabilized_medical.yaml) | Qwen 3.5 9B | Stabilized | Medical VQA |
-| [gemma12b_combined_auxiliary.yaml](configs/runs/gemma12b_combined_auxiliary.yaml) | Gemma 4 12B | Native + stabilized | Medical VQA + auxiliary |
+## Environment variables
 
-Both examples start with SFT. Larger model profiles are available in [configs/models.yaml](configs/models.yaml).
-These profiles still require full-model GPU checks.
+Dataset and storage commands load the repository `.env`. Existing shell values take precedence.
+`run.py` loads the file selected by `env_file` in the run YAML.
 
-Set the run YAML fields:
-
-| Field | What to set |
-|---|---|
-| `run.name`, `run.date` | Unique name and quoted `YYYY-MM-DD` date |
-| `recipe` | `sft`, `rl_only`, or `sft_then_rl` |
-| `model`, `model_settings` | Model identifier and its complete pinned profile |
-| `paths.media_root` | Local parent of `06` and `07` |
-| `paths.split_dir` | Directory containing `train.jsonl`, `validation.jsonl`, and `test.jsonl` |
-| `paths.weights_root` | Local parent of `<model-repository>/<revision>` |
-| `paths.output_root` | Local parent for dated training runs |
-| `paths.catalog`, `paths.prompts` | RGB catalog and medical prompt YAML |
-| `dataset.sources` | `[stabilized]` or `[native, stabilized]` |
-| `mixture` | Enabled tasks and sampling |
-| `sft`, `rl` | Training configuration for each stage |
-| `execution` | Training GPU count, device IDs, and external vLLM endpoint/name |
-| `cloud` | Base-weight source and fine-tuned destination |
-| `wandb` | Entity, project, mode, and tracking configuration |
-| `env_file` | Credentials file. Shell values take precedence |
-
-Relative paths resolve from the YAML directory. The example paths are placeholders.
-When changing models, copy the matching full profile from `configs/models.yaml` into `model_settings`.
-
-Keep credentials in `.env` or the shell. Keep paths and run choices in the run YAML.
-The root environment template also supports preprocessing and older commands. Those variables are not required by the run-YAML launcher.
-
-| Recipe | Starting weights | Stages |
+| Task | Variables | When needed |
 |---|---|---|
-| `sft` | Verified cloud base weights | SFT |
-| `rl_only` | Verified cloud base weights | GSPO with a new LoRA adapter |
-| `sft_then_rl` | Verified cloud base weights | SFT, then GSPO from the best SFT adapter |
+| GT and split preparation | Dataset path variables below | Only when omitting `--media-root` |
+| Base-weight download | `LOCAL_WEIGHTS_ROOT` | Only when omitting `--weights-root`; downloads go under its `weights/` subdirectory |
+| W&B tracking | `WANDB_API_KEY` | Online tracking; offline and disabled modes need no key |
+| vLLM connection | `VLLM_API_KEY` | Only if the server requires API authentication |
+| Cloud upload | [Storage credentials](#upload-the-model) | Uploading model files |
 
-For `sft_then_rl`, leave `sft_run: null` to run both stages.
-To reuse a completed SFT run, set `sft_run` to its directory. The launcher checks compatibility before starting RL.
-
-## 2. Prepare the dataset
-
-Complete [preprocessing](../preprocess/README.md) first. Both datasets use this layout:
+GT and split commands choose the dataset path in this order:
 
 ```text
-<dataset-root>/
-├── 00-data_website/medical/completed_clips.csv
-├── 06-native_media_dataset/<clip_id>/
-│   ├── <clip_id>.mp4
-│   ├── <clip_id>.json
-│   ├── all_annotations/
-│   ├── provenance.json
-│   └── GT/medical_vqa.json
-├── 07-stabilized_media_dataset/<clip_id>/
-└── 08-train_val_test/<split-date>/answer_only/
+--media-root → LOCAL_DATASET_ROOT → TRAIN_MEDIA_ROOT → AIRLAB_DATASET_ROOT → TRIAGE_DATASET_ROOT
 ```
 
-GT and split preparation use the current completion CSV, not exported completion flags.
-Use `--completed-manifest /path/to/completed_clips.csv` when the CSV is elsewhere.
+Set only the path variable you need, or pass `--media-root` explicitly.
+The GT and split commands below need no environment variables or API keys because they include the path.
+
+For training, the run YAML supplies dataset paths, output paths, model selection, and W&B configuration.
+Its `cloud` and `wandb` values override matching environment values.
+Its `execution.training_devices` sets `CUDA_VISIBLE_DEVICES` for the training processes.
+The server command below sets its own GPU allocation separately.
+
+## Prepare the dataset
+
+
+Complete [preprocessing](../preprocess/README.md) first. Run the following commands on the data server.
+
+GT and split preparation read `dataset_manifest.json` inside `06` and `07`.
+Preprocessing publishes these files with the successfully prepared, eligible clips.
+Neither command reads `04`, `05`, or the website's live completion list.
 
 ### Human-answer targets
 
@@ -122,11 +95,13 @@ Existing split directories are never overwritten. `--split-root` changes the par
 The selector:
 
 - Keeps native and stabilized views together.
-- Prioritizes observable positives while retaining assessed-absent and not-assessable coverage.
+- Prioritizes retaining positive examples of every available observable label in training.
+- Then balances held-out sizes, assessment coverage, year proportions, and observable positives.
 - Includes at most one segment per held-out casualty group.
 - Excludes other segments of that held-out casualty from all splits.
 - Keeps source recordings separate across splits and seeks year and recording diversity.
 
+Labels present in fewer than three recordings cannot have positives in every recording-disjoint split; the report identifies these limits.
 Grouping can change the achieved percentages. `summary.json` reports actual sizes, coverage, exclusions, and fingerprints.
 Person IDs group casualties within their source recording. They do not identify the same person across different recordings.
 Validation and test are deliberately positive-enriched, so their scores do not estimate natural label prevalence.
@@ -138,22 +113,139 @@ Each JSONL row references one medical question:
 ```
 
 The split files do not duplicate media or answers. Training loads answers from each clip's `GT/medical_vqa.json`.
-Split creation currently supports answer-only data. A future `cot/` directory can share the dated parent.
-IR split preparation requires an explicit thermal catalog. The current training recipes remain RGB-only.
+These commands prepare RGB, answer-only training data.
 
 ### Stage data on the training machine
 
-Finish media and GT preparation before copying a fixed dataset snapshot.
-Copy the complete referenced clip folders, preserving the `06` and `07` directory names.
-Copy the split directory and use the same catalog and prompts.
-Set `paths.media_root` and `paths.split_dir` to the destination paths.
+Finish media and GT preparation before transfer. Stop preprocessing and annotation updates while copying.
+
+The transfer script copies:
+
+- Every clip folder listed in the `06` and `07` prepared manifests, including videos, annotations, and existing GT.
+- Both prepared manifests.
+- The selected split directory, preserving its path under `08-train_val_test`.
+
+This includes prepared clips outside the split and any prepared thermal clips. The split files control which clips training uses.
+Stale clip folders that are absent from the manifests are excluded. Files from `04` and `05` are not copied.
+
+Requirements: `rsync` on both machines and SSH access to the destination.
+The destination directory must exist. The script does not need API keys or a `.env` file; provide paths through its arguments.
+
+Run these commands on the machine that holds the source dataset.
+Set your paths and SSH destination:
+
+```bash
+export DATASET_ROOT='/path/to/dataset'
+export TRANSFER_DESTINATION='username@transfer-host:/path/to/datasets'
+```
+
+Preview the transfer:
+
+```bash
+uv run python scripts/train/transfer_dataset.py \
+  --media-root "$DATASET_ROOT" \
+  --split-dir 08-train_val_test/2026-10-31/answer_only \
+  --destination "$TRANSFER_DESTINATION" \
+  --inspect
+```
+
+The preview checks source files and split checksums, then contacts the destination to compare files.
+It lists proposed changes and reports source size and transfer statistics. It copies nothing.
+
+Start the transfer:
+
+```bash
+uv run python scripts/train/transfer_dataset.py \
+  --media-root "$DATASET_ROOT" \
+  --split-dir 08-train_val_test/2026-10-31/answer_only \
+  --destination "$TRANSFER_DESTINATION"
+```
+
+Rerun the same command after an interruption. Completed files are skipped when their sizes and modification times match.
+Partial files are retained for reuse. Changed files are updated; destination files are never deleted.
+The script rejects missing inputs, symbolic links, and manifests that differ from those recorded in the split.
+It also checks for source metadata changes before and after transfer. A change causes an error; stop updates and rerun.
+
+Set `paths.media_root` to the destination dataset directory in your run YAML.
+Set `paths.split_dir` to its `08-train_val_test/<date>/answer_only` directory.
+Use the same catalog and prompts as dataset preparation.
 
 Training does not need `04`, `05`, or a live connection to the annotation site.
-Retain the completion CSV if you plan to repeat GT or split preparation on that machine.
-Local media storage avoids repeated network reads during decoding. Keep checkpoints and exports on persistent storage.
-Data transfer and cluster submission remain separate from the training scripts.
+Keep checkpoints and exports on persistent storage. Training paths remain configurable in the run YAML.
 
-## 3. Download base weights
+## Configure a run
+
+
+Use one complete YAML per run. Copy an example within the same directory:
+
+```bash
+cp scripts/train/configs/runs/qwen9b_stabilized_medical.yaml scripts/train/configs/runs/my_run.yaml
+```
+
+| Example | Model | Videos | Tasks |
+|---|---|---|---|
+| [qwen9b_stabilized_medical.yaml](configs/runs/qwen9b_stabilized_medical.yaml) | Qwen 3.5 9B | Stabilized | Medical VQA |
+| [gemma12b_combined_auxiliary.yaml](configs/runs/gemma12b_combined_auxiliary.yaml) | Gemma 4 12B | Native + stabilized | Medical VQA + auxiliary |
+
+Both examples start with SFT. Larger model profiles are available in [configs/models.yaml](configs/models.yaml).
+
+Set the run YAML fields:
+
+| Field | What to set |
+|---|---|
+| `run.name`, `run.date` | Unique name and quoted `YYYY-MM-DD` date |
+| `recipe` | `sft`, `rl_only`, or `sft_then_rl` |
+| `model`, `model_settings` | Model identifier and its complete pinned profile |
+| `paths.media_root` | Local parent of `06` and `07` |
+| `paths.split_dir` | Directory containing `train.jsonl`, `validation.jsonl`, and `test.jsonl` |
+| `paths.weights_root` | Local parent of `<model-repository>/<revision>` |
+| `paths.output_root` | Local parent for dated training runs |
+| `paths.catalog`, `paths.prompts` | RGB catalog and medical prompt YAML |
+| `dataset.sources` | `[stabilized]` or `[native, stabilized]` |
+| `mixture` | Enabled tasks and sampling |
+| `sft`, `rl` | Training configuration for each stage |
+| `execution` | Training GPU count, device IDs, and external vLLM endpoint/name |
+| `cloud` | Base-weight source and fine-tuned destination |
+| `wandb` | Entity, project, mode, and tracking configuration |
+| `env_file` | Credentials file. Shell values take precedence |
+
+Relative paths resolve from the YAML directory. The example paths are placeholders.
+When changing models, copy the matching full profile from `configs/models.yaml` into `model_settings`.
+
+Keep credentials in `.env` or the shell. Keep paths and run choices in the run YAML.
+
+| Recipe | Starting weights | Stages |
+|---|---|---|
+| `sft` | Verified cloud base weights | SFT |
+| `rl_only` | Verified cloud base weights | GSPO with a new LoRA adapter |
+| `sft_then_rl` | Verified cloud base weights | SFT, then GSPO from the best SFT adapter |
+
+For `sft_then_rl`, leave `sft_run: null` to run both stages.
+To reuse a completed SFT run, set `sft_run` to its directory. The launcher checks compatibility before starting RL.
+
+### W&B tracking
+
+
+For online W&B tracking, add your key to the local `.env`:
+
+```dotenv
+WANDB_API_KEY=your_private_key
+```
+
+The run YAML already contains the project and entity. Set `wandb.mode` to `online`, `offline`, or `disabled`.
+W&B logs training losses, learning rates, evaluation metrics, and available RL rewards.
+
+W&B run names follow `<date>/<model-repository>/answer_only/<stage>/<run-name>`.
+Local tracking files stay under the run's `tracking/` directory and are excluded from model publication.
+
+To upload offline logs later:
+
+```bash
+uv run --group rl wandb sync /path/to/run/tracking/wandb/offline-run-*
+```
+
+## Download base weights
+
 
 Run from the repository root after the [base installation](../../README.md#installation).
 Select the model and the same weights directory used in your run YAML:
@@ -172,42 +264,12 @@ Downloads check revisions and checksums, resume interrupted transfers, and rejec
 Training uses the verified local copy with network fallback disabled. Public base-weight downloads do not require an HF token.
 
 The standalone downloader reads cloud defaults from `configs/storage.yaml`. It does not read the run YAML.
+`AIRLAB_SWIFT_URL` overrides the default Swift endpoint.
+Without `--weights-root` or `LOCAL_WEIGHTS_ROOT`, `AIRLAB_WEIGHTS_DIR` supplies the base-weight directory directly.
 For a different source, set `AIRLAB_SOURCE_CONTAINER` and `AIRLAB_SOURCE_PREFIX` in that command's shell to match `cloud`.
 
-## 4. Configure credentials and W&B
+## Start the vLLM server
 
-For online W&B tracking, set the key in the ignored `.env`:
-
-```dotenv
-WANDB_API_KEY=your_private_key
-```
-
-The run YAML already contains the project and entity. Set `wandb.mode` to `online`, `offline`, or `disabled`.
-W&B logs training losses, learning rates, evaluation metrics, and available RL rewards.
-Model uploads and gradient watching are disabled by default.
-
-W&B run names follow `<date>/<model-repository>/answer_only/<stage>/<run-name>`.
-Local tracking files stay under the run's `tracking/` directory and are excluded from model publication.
-Online resumes reuse the run ID. Offline resumes create separate local sessions.
-
-To upload offline logs later:
-
-```bash
-uv run --group rl wandb sync /path/to/run/tracking/wandb/offline-run-*
-```
-
-Cloud publication requires write credentials. Choose one authentication method:
-
-| Method | Variables in `.env` |
-|---|---|
-| OpenStack application credential | `OS_AUTH_URL`, `AIRLAB_APPLICATION_CREDENTIAL_FILE` |
-| S3 credentials | `AIRLAB_S3_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
-
-Use the identity URL from your OpenStack configuration.
-The application-credential JSON must contain `id`, `secret`, and `project_id`. Keep it outside the repository.
-Do not configure both authentication methods.
-
-## 5. Prepare the vLLM server
 
 All recipes use vLLM for evaluation. RL also uses it for rollouts. SFT weight updates run through TRL `SFTTrainer`.
 
@@ -269,7 +331,8 @@ The weight-transfer interface must not be publicly exposed. It requires unauthen
 The trainer supplies processed video inputs and synchronizes language, vision, and connector weights.
 The server does not resample those videos. Start it with full model weights, without a separate LoRA adapter.
 
-## 6. Inspect and launch
+## Launch training
+
 
 Inspect the run YAML:
 
@@ -277,8 +340,8 @@ Inspect the run YAML:
 uv run --group rl python scripts/train/run.py --config scripts/train/configs/runs/my_run.yaml --inspect
 ```
 
-This prints the resolved configuration, stage commands, batch sizes, and pending data checks.
-It does not read videos, load weights, load credentials, or start W&B. It is not a dataset or GPU validation run.
+Inspection prints the resolved configuration and launch commands without starting training.
+It does not validate the dataset or GPU memory fit.
 
 After preparing data, weights, and the server, launch:
 
@@ -294,7 +357,11 @@ For resume, set `resume` to `/path/to/run/checkpoints/checkpoint-N` and keep the
 The checkpoint identifies the stage. An RL-stage resume does not repeat SFT.
 Resume checks the saved configuration, prompts, catalog, and dataset fingerprints.
 
-## 7. Review and publish the result
+Before a full run, check GPU memory, video throughput, weight synchronization, evaluation, and merged-model reload on the target hardware.
+The configured video budget can exceed one GPU's memory. Increasing data-parallel workers does not reduce each video's activation memory.
+
+## Retrieve the trained model
+
 
 ```text
 <output_root>/<date>/<model-repository>/answer_only/<stage>/<run-name>/
@@ -323,7 +390,23 @@ If export fails after saving the adapter, retry:
 uv run --group rl python scripts/train/model_storage.py export --run-dir /path/to/run
 ```
 
-Inspect publication, then upload:
+## Upload the model
+
+Add write credentials to `.env`. Choose one authentication method:
+
+| Method | Variables in `.env` |
+|---|---|
+| OpenStack application credential | `OS_AUTH_URL`, `AIRLAB_APPLICATION_CREDENTIAL_FILE` |
+| S3 credentials | `AIRLAB_S3_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+
+Use the identity URL from your OpenStack configuration.
+The application-credential JSON must contain `id`, `secret`, and `project_id`. Keep it outside the repository.
+Configure only the authentication method you use.
+For temporary S3 credentials, also set `AWS_SESSION_TOKEN`.
+`AWS_DEFAULT_REGION` defaults to `us-east-1`.
+Public base-weight downloads need no write credentials.
+
+Inspect the destination, then upload:
 
 ```bash
 uv run --group rl python scripts/train/model_storage.py publish --run-dir /path/to/run --inspect
@@ -341,7 +424,11 @@ Publication retains local files, resumes identical uploads, and refuses to repla
 It writes `complete.json` last. Deploy the complete model from `merged/` in a published run with this marker.
 Merged shards are limited to 4 GB. The uploader accepts files up to 5 GB.
 
-## Task mixture and grounding
+## Reference
+
+<details>
+<summary>Task mixture and grounding</summary>
+
 
 Every enabled valid medical VQA example is retained. `subject_check` is excluded. Medical context questions apply only to native videos.
 Auxiliary questions are additional examples, resampled each epoch and shuffled with medical examples across videos and tasks.
@@ -378,8 +465,7 @@ sft:
 This records a completed check. It does not correct coordinates.
 Missing or invalid auxiliary targets are reported while valid medical questions remain available.
 
-<details>
-<summary>RL spatial reward configuration</summary>
+### RL spatial rewards
 
 Configure rewards in the run YAML under `rl.rewards`.
 Spatial matching requires the correct label, required anatomical slot, and a timestamp within ±0.5 seconds.
@@ -396,9 +482,13 @@ Body-posture and medic-presence label questions omit spatial requests in RL.
 Other respiratory labels retain classification and applicable temporal tasks without spatial requests.
 These reward rules do not change human annotations. Temporal-span tolerances are configured separately.
 
+
+
 </details>
 
-## Training and evaluation reference
+<details>
+<summary>Training defaults and evaluation metrics</summary>
+
 
 The example YAMLs record all values. Current shared defaults include:
 
@@ -429,17 +519,12 @@ Invalid answers count as errors for every expected label. Categories without sco
 The selected best checkpoint is evaluated on the held-out medical test set. Test scores never select checkpoints.
 An empty test set produces an explicit skipped report.
 
-## Checks before a full run
 
-- Dataset: current media, valid answers, aligned coordinates, timestamps, and split integrity.
-- Device run: memory, decoding throughput, video forward/backward, weight synchronization, constrained generation, resume, and merged-model reload.
-- Each model: training and rollout token positions with the actual checkpoint.
+</details>
 
-Configuration and CPU checks do not establish GPU memory fit or full-model correctness.
-At the full Qwen budget, video activations can exceed an 80 GB GPU. More data-parallel ranks do not solve that limit.
-The code does not silently reduce FPS, resolution, or context length.
+<details>
+<summary>Code layout and direct entry points</summary>
 
-## Code map and advanced commands
 
 | Path | Purpose |
 |---|---|
@@ -458,3 +543,5 @@ Use `--help` for their arguments. `train_sft_then_rl.py` runs only the RL stage 
 Direct SFT `--inspect` reads prepared examples. `--check-batch` also decodes a video through the processor without loading model weights.
 Direct RL inspection with dataset paths checks media geometry and reward targets, which can take time.
 These checks differ from `run.py --inspect`, which only resolves the run configuration.
+
+</details>

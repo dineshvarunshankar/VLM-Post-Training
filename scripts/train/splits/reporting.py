@@ -32,8 +32,16 @@ def summary_report(selection, candidates, metadata, inputs, root, split_date, pe
     splits = {name: summarize_split(selection[name], total) for name in ('train', 'validation', 'test')}
     all_years = {clip.year for clip in candidates}
     warnings = ['Validation and test are positive-enriched; their scores do not estimate natural label prevalence.']
+    if metadata.get('unpaired_prepared_clips'):
+        warnings.append(f"Excluded {metadata['unpaired_prepared_clips']} prepared clips without a matching prepared variant.")
     all_observed = set().union(*(clip.observables for clip in candidates))
     train_observed = set().union(*(clip.observables for clip in selection['train']))
+    cue_recordings = {cue: sorted({clip.recording for clip in candidates if cue in clip.observables})
+                      for cue in sorted(all_observed)}
+    limited = {cue: len(recordings) for cue, recordings in cue_recordings.items() if len(recordings) < 3}
+    if limited:
+        warnings.append(f'{len(limited)} observable labels occur in fewer than three source recordings; '
+                        'these cannot have positives in all three recording-disjoint splits.')
     if all_observed - train_observed:
         warnings.append('Observable labels with no retained positive training examples: ' + ', '.join(sorted(all_observed - train_observed)))
     for name, values in splits.items():
@@ -63,9 +71,13 @@ def summary_report(selection, candidates, metadata, inputs, root, split_date, pe
                    'grouping': 'original_source_recording', 'casualty_identity': ['video_name', 'person_id'],
                    'heldout_segments_per_casualty': 1, 'native_stabilized_paired': True,
                    'selection': 'seeded_multistart_local_search',
-                   'ranking': ['nonempty_splits', 'year_coverage', 'target_pair_counts', 'assessment_coverage',
+                   'ranking': ['nonempty_splits', 'training_observable_coverage', 'year_coverage', 'target_pair_counts', 'assessment_coverage',
+                               'year_proportion_balance',
                                'minimum_heldout_observable_density', 'observable_yes_count',
                                'observable_label_coverage', 'recording_diversity']},
+        'observable_coverage': {'available': len(all_observed), 'training': len(train_observed),
+                                'missing_from_training': sorted(all_observed - train_observed),
+                                'limited_source_recordings': limited},
         'input_pairs': total, 'input_fingerprint_sha256': hashlib.sha256(json.dumps(fingerprints).encode()).hexdigest(),
         'target_pairs_per_holdout': selection['target_pairs_per_holdout'],
         'splits': splits, 'excluded_pairs': len(selection['excluded']),
@@ -83,6 +95,8 @@ def print_report(report, destination, inspect):
               f"{sum(value['medical_vqa'].values()):7} {value['observable_yes']:8} "
               f"{value['assessed_absent_yes']:7} {value['not_assessable_yes']:9}")
         print(f"  Years: {value['years']}; recordings: {value['recordings']}; casualty groups: {value['casualties']}")
+    coverage = report['observable_coverage']
+    print(f"Training observable coverage: {coverage['training']}/{coverage['available']} labels with positive examples")
     print(f"Excluded redundant held-out segments: {report['excluded_pairs']} pairs")
     print('Selection label counts count each label once per clip pair across the two views.')
     for message in report['warnings']:

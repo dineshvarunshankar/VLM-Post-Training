@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 
-from scripts.preprocess.completion_manifest import CompletionManifest, DEFAULT_MANIFEST
+from scripts.preprocess.prepared_manifest import PreparedManifest
 from scripts.train.shared.data import DATASETS, extract_answers, read_yaml, recording_group, sha256
 from scripts.train.splits.selection import ClipPair
 
@@ -33,17 +33,21 @@ def label_sets(answers, catalog):
     return observed, absent, unassessable
 
 
-def load_inventory(root, catalog_path, modality, manifest_path=None, workers=8):
+def load_inventory(root, catalog_path, modality, workers=8):
     root, catalog_path = Path(root).resolve(), Path(catalog_path).resolve()
     catalog_hash = sha256(catalog_path)
     catalog = read_yaml(catalog_path)
     if sha256(catalog_path) != catalog_hash:
         raise ValueError('Catalog changed during loading')
-    manifest = CompletionManifest(manifest_path or root / DEFAULT_MANIFEST, root)
+    manifest = PreparedManifest(root)
     snapshot = manifest.summary()
     native = manifest.entries('native')
     stabilized = {entry['clip'].removesuffix('_S'): entry for entry in manifest.entries('stabilized')}
-    inputs = {catalog_path: catalog_hash}
+    unpaired = sum(entry['clip'] not in stabilized for entry in native)
+    native_names = {entry['clip'] for entry in native}
+    unpaired += sum(name not in native_names for name in stabilized)
+    native = [entry for entry in native if entry['clip'] in stabilized]
+    inputs = {catalog_path: catalog_hash, **manifest.hashes}
 
     def read_pair(entry):
         fingerprints = {}
@@ -68,11 +72,13 @@ def load_inventory(root, catalog_path, modality, manifest_path=None, workers=8):
             annotations = folder / 'all_annotations'
             metadata = meta if variant == 'native' else read(annotations / 'meta.json')
             if metadata.get('clip') != current['clip'] or metadata.get('modality') != modality:
-                raise ValueError(f'{variant}/{current["clip_id"]}: completion identity or modality mismatch')
+                raise ValueError(f'{variant}/{current["clip_id"]}: prepared identity or modality mismatch')
             video = folder / (current['clip_id'] + '.mp4')
             if not video.is_file() or video.is_symlink() or Path(metadata.get('video_path', '')).name != video.name:
                 raise ValueError(f'{variant}/{current["clip_id"]}: missing or mismatched prepared video')
             provenance = read(folder / 'provenance.json')
+            if fingerprints[folder / 'provenance.json'] != current['provenance_sha256']:
+                raise ValueError(f'{variant}/{current["clip_id"]}: output changed since prepared manifest publication; finish preprocessing first')
             labels = read(annotations / 'labels.json')
             camera = read(annotations / 'camera_motion.json')
             if not isinstance(camera.get('view_type'), str) or not camera['view_type'].strip():
@@ -153,20 +159,17 @@ def load_inventory(root, catalog_path, modality, manifest_path=None, workers=8):
                 candidates.append(pair)
     if errors:
         raise ValueError('Split input validation failed:\n' + json.dumps(errors, indent=2))
-    if manifest.summary()['sha256'] != snapshot['sha256']:
-        raise ValueError('Completion list changed during inventory; retry')
+    manifest.verify_unchanged()
     if not candidates:
         raise ValueError(f'No completed prepared {modality} pairs are available')
-    return candidates, {'completion_manifest': snapshot, 'catalog_sha256': catalog_hash,
+    return candidates, {'prepared_manifests': snapshot, 'unpaired_prepared_clips': unpaired, 'catalog_sha256': catalog_hash,
                         'catalog_path': str(catalog_path), 'modality': modality}, inputs
 
 
-def verify_inputs(inputs, manifest_path, expected_manifest_hash, workers=8):
+def verify_inputs(inputs, workers=8):
     def unchanged(item):
         path, expected = item
         if sha256(path) != expected:
             raise ValueError(f'Input changed during split selection: {path}')
     with ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(unchanged, inputs.items()))
-    if sha256(manifest_path) != expected_manifest_hash:
-        raise ValueError('Completion list changed during split selection; retry')

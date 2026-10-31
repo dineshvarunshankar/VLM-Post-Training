@@ -18,8 +18,9 @@ import tempfile
 import uuid
 
 from completion_manifest import CompletionManifest, DEFAULT_MANIFEST
+from prepared_manifest import publish_manifests
 
-from inspection import inspect_inventory, print_summary, snapshot, output_paths, flat_output_paths, COMPATIBLE_FLAT_WRITERS
+from inspection import inspect_inventory, print_summary, snapshot, output_paths, flat_output_paths, COMPATIBLE_FLAT_WRITERS, output_status
 
 DEFAULT_ROOT = Path('/mnt/nas/chiron/datasets/full_dataset_inventory_(DO_NOT_MODIFY!!!!)')
 VARIANTS = {
@@ -177,11 +178,12 @@ def annotation_hashes(folder):
 
 def source_signature(video, folder, thickness):
     """Content hashes detect edits even if timestamps or file sizes are unchanged."""
+    assets = annotation_hashes(folder)
     return {
         'video_sha256': digest(video),
         'sidecar_sha256': digest(video.with_suffix('.json')),
-        'annotation_assets_sha256': annotation_hashes(folder),
-        'annotation_sha256': {p.name: digest(p) for p in sorted(folder.glob('*.json'))},
+        'annotation_assets_sha256': assets,
+        'annotation_sha256': {name: value for name, value in assets.items() if '/' not in name and name.endswith('.json')},
         'box_color': COLOR,
         'box_px': thickness,
         'writer_sha256': digest(Path(__file__)),
@@ -404,8 +406,26 @@ def process_clip(record, folder, source, output_root, output_name, protected_roo
         meta = read_json(folder / 'meta.json')
         if entry is not None and Path(meta['video_path']).name != entry['video'].name:
             raise ValueError('Export video_path differs from current completion manifest; source export must be refreshed')
-        # Snapshot before reading boxes and decoding video; reject concurrent source edits.
-        signature = source_signature(source / Path(meta['video_path']).name, folder, args.box_px)
+        video = source / Path(meta['video_path']).name
+        if video.is_symlink():
+            raise ValueError('Source video must not be a symlink')
+        destination = output_root / output_name / video.stem / video.name
+        if any(destination.resolve().is_relative_to(p) for p in protected_roots):
+            raise ValueError('Destination resolves inside source tree')
+        validate_destinations(destination, folder.name)
+        record.update(modality=meta.get('modality'), source_video=str(video), destination=str(destination), source_annotations=str(folder),
+                      annotation_status=meta.get('annotation_status'), box_color=COLOR, box_px=args.box_px)
+        if not args.write:
+            state, _ = output_status(video, folder, destination, digest(Path(__file__)), args.box_px)
+            if state == 'current_by_metadata':
+                check_completion()
+                record.update(status='unchanged', verification_mode='file_metadata')
+                return record
+        signature = source_signature(video, folder, args.box_px)
+        if destination.exists() and not args.write and output_is_current(destination, signature):
+            check_completion()
+            record['status'] = 'unchanged'
+            return record
         video, stream, filters, gaps, drawn = inspect_clip(folder, source, args.box_px, args.selection, current_completion=entry is not None)
         if source_signature(video, folder, args.box_px) != signature:
             raise ValueError('Source changed during validation; run again')
@@ -514,6 +534,7 @@ def main():
               'created_at': datetime.now(timezone.utc).isoformat(), 'clips': []}
     if args.completion_manifest:
         report['completion_manifest'] = args.completion_manifest.summary()
+    report['limit'] = args.limit
     report['workers'] = args.workers
     report['threads_per_worker'] = MEDIA_THREADS
     jobs = []
@@ -536,6 +557,9 @@ def main():
                     record['status'] = 'not_selected_limit'
                     continue
                 inspected += 1
+                record['status'] = 'queued'
+                jobs.append((record, folder, source, output_name, entry))
+                continue
             try:
                 if pair_id(folder.name) in rejected:
                     record['status'] = 'rejected'
@@ -590,6 +614,11 @@ def main():
                     record.update(status='cancelled', reason='Run interrupted before submission')
         report['interrupted'] = interrupted
     report['counts'] = dict(Counter(c['status'] for c in report['clips']))
+    try:
+        report['prepared_manifests'] = publish_manifests(report, args.completion_manifest, output_root, variants)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        report['manifest_error'] = str(error)
+        print(f'Prepared dataset manifest was not fully published: {error}', flush=True)
     encoded = json.dumps(report, indent=2) + '\n'
     if not args.inspect:
         output_root.mkdir(parents=True, exist_ok=True)
@@ -602,7 +631,7 @@ def main():
     print_run_summary(report, manifest)
     if args.report:
         print(f'Additional JSON report: {args.report}')
-    return 130 if interrupted else (1 if report['counts'].get('error') else 0)
+    return 130 if interrupted else (1 if report['counts'].get('error') or report.get('manifest_error') else 0)
 
 
 if __name__ == '__main__':

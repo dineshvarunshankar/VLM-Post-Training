@@ -12,12 +12,15 @@ def file_stamp(path):
 
 
 def annotation_stamps(folder):
-    return {str(p.relative_to(folder)): file_stamp(p) for p in sorted(folder.rglob('*')) if p.is_file()}
+    files = sorted(folder.rglob('*'))
+    if folder.is_symlink() or any(path.is_symlink() for path in files):
+        raise ValueError('Annotation symlinks are not supported')
+    return {str(path.relative_to(folder)): file_stamp(path) for path in files if path.is_file()}
 
 
 # These writers use the same overlay, encoding, and verification implementation.
 # 959da46: only eligibility and publication membership checks changed.
-COMPATIBLE_FLAT_WRITERS = {'959da46ec98c2a8e89a479a70878ab02a0e8e0999ee5ec5585405ef1386db016', '3e15a9e3e44ab069825691c8c000de9d7bf9dc3d18695792956681df68fd2621', '9cd4792a7446122995e84b6983b1f1e4ed233769ee2d2e4b02288fbc2680850b', '4d0f8e93a683ece1ce9dacafb115d10d27ba08fda0d43d9cf2b082099418ed32'}
+COMPATIBLE_FLAT_WRITERS = {'7062994fa1d497cb62e170d507ab618c52b399eb3ce3b74119cd28e26ed41719', 'bc4515396854c7ade38142bc3ab2e1a689de56be8bd7f853844129678fff4cc9', '959da46ec98c2a8e89a479a70878ab02a0e8e0999ee5ec5585405ef1386db016', '3e15a9e3e44ab069825691c8c000de9d7bf9dc3d18695792956681df68fd2621', '9cd4792a7446122995e84b6983b1f1e4ed233769ee2d2e4b02288fbc2680850b', '4d0f8e93a683ece1ce9dacafb115d10d27ba08fda0d43d9cf2b082099418ed32'}
 
 
 def output_paths(video, clip_name=None):
@@ -54,6 +57,10 @@ def output_status(video, annotations, output, writer_hash, box_px):
     try:
         saved = json.loads(paths['provenance'].read_text())
         signature = saved.get('source_signature', {})
+        if (saved.get('verification') != 'decoded frame hashes match uncompressed filtered source' or
+                signature.get('source_video') != str(video.resolve()) or
+                signature.get('source_annotations') != str(annotations.resolve())):
+            return 'needs_verification', 'Saved verification or source identity does not match'
         if (signature.get('writer_sha256') not in ({writer_hash} | COMPATIBLE_FLAT_WRITERS) or
                 signature.get('box_px') != box_px or signature.get('box_color') != '0x00ff00'):
             return 'changed', 'Writer code or overlay settings changed'

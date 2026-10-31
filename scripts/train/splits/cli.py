@@ -26,7 +26,6 @@ def arguments(argv=None):
     parser.add_argument('--percentage', type=float, help='Percentage for EACH validation/test split; default 5')
     parser.add_argument('--modality', type=str.upper, choices=['RGB', 'IR'], help='Required without an interactive terminal; otherwise prompts')
     parser.add_argument('--catalog', type=Path, help='Defaults to the RGB catalog; IR requires an explicit modality-specific catalog')
-    parser.add_argument('--completed-manifest', type=Path)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--workers', type=int, default=8, help='Concurrent annotation readers; no video decoding')
     parser.add_argument('--inspect', action='store_true', help='Print the proposed split without writing any files')
@@ -97,17 +96,16 @@ def publish_split(destination, selection, report):
 def main(argv=None):
     args = arguments(argv)
     try:
-        print('Reading completed prepared annotations...', flush=True)
+        print('Reading prepared dataset manifests and annotations...', flush=True)
         candidates, metadata, inputs = load_inventory(args.media_root, args.catalog, args.modality,
-                                                      args.completed_manifest, args.workers)
+                                                      args.workers)
         print(f'Selecting from {len(candidates)} clip pairs...', flush=True)
         selection = select_splits(candidates, args.percentage, args.seed)
         destination = args.split_root / args.date / "answer_only"
         report = summary_report(selection, candidates, metadata, inputs, args.media_root,
                                 args.date, args.percentage, args.seed)
         if not args.inspect:
-            verify_inputs(inputs, Path(metadata['completion_manifest']['path']),
-                          metadata['completion_manifest']['sha256'], args.workers)
+            verify_inputs(inputs, args.workers)
             publish_split(destination, selection, report)
         print_report(report, destination, args.inspect)
         return 0
