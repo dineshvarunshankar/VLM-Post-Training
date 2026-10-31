@@ -87,6 +87,15 @@ def load_lora_model(model_config, checkpoint_config, config):
         **options,
     )
     install_video_frame_compatibility(model)
+    # Gemma4 declares an optional audio block even for checkpoints without audio.
+    # Accelerate resolves every declared class before FSDP wrapping. Keep this
+    # correction instance-local and preserve errors for other missing classes.
+    if (model.config.model_type == 'gemma4'
+            and model.config.audio_config is None
+            and not any(type(module).__name__ == 'Gemma4AudioLayer' for module in model.modules())):
+        model._no_split_modules = [
+            name for name in model._no_split_modules if name != 'Gemma4AudioLayer'
+        ]
     model.config.use_cache = False
     targets, groups = select_lora_targets(model)
     model = get_peft_model(
