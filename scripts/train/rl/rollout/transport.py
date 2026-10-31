@@ -34,8 +34,16 @@ def parse_rollout_response(response, prompt_ids, *, max_tokens):
         raise ValueError('Sampling log probabilities must cover every completion token')
     logprobs = []
     for token, entry in zip(tokens, entries):
-        if (not isinstance(entry, dict) or type(entry.get('token_id')) is not int
-                or entry['token_id'] != token):
+        if not isinstance(entry, dict):
+            raise ValueError('Sampling log probability belongs to a different token')
+        # vLLM 0.30 encodes IDs in the token string when return_token_ids is enabled.
+        if 'token_id' in entry:
+            aligned = type(entry['token_id']) is int and entry['token_id'] == token
+            if 'token' in entry:
+                aligned = aligned and entry['token'] == f'token_id:{token}'
+        else:
+            aligned = entry.get('token') == f'token_id:{token}'
+        if not aligned:
             raise ValueError('Sampling log probability belongs to a different token')
         value = entry.get('logprob')
         if type(value) not in (int, float) or not math.isfinite(value) or value > 0:
