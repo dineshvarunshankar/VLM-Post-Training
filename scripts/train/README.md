@@ -237,10 +237,16 @@ export BASE_MODEL_DIR="/path/to/model-weights/weights/Qwen/Qwen3.5-9B/REVISION"
 export ROLLOUT_TP=1
 export ROLLOUT_DP=4
 export ROLLOUT_MAX_SEQS=YOUR_CHECKED_CONCURRENCY
+export ROLLOUT_GPU_MEMORY_UTILIZATION=YOUR_CHECKED_FRACTION
 ```
 
 Replace `REVISION` with the downloaded revision. Set `ROLLOUT_MAX_SEQS` from the memory and throughput device check.
 Server concurrency is separate from the training batch size.
+For RL, set `ROLLOUT_MAX_SEQS` to at least `rl.policy.num_generations`.
+Reserve GPU memory for weight-transfer buffers and NCCL communicators when choosing the memory fraction.
+
+Install `ffprobe` and add its directory to `PATH` before RL.
+Video-geometry checks require this executable, in addition to FFmpeg shared libraries.
 
 Example server on GPUs 4–7:
 
@@ -249,6 +255,7 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 VLLM_SERVER_DEV_MODE=1 uv run --group rl vllm serve
   --served-model-name triage-policy --host 127.0.0.1 --port 8000 \
   --dtype bfloat16 --tensor-parallel-size "$ROLLOUT_TP" \
   --data-parallel-size "$ROLLOUT_DP" --max-num-seqs "$ROLLOUT_MAX_SEQS" \
+  --gpu-memory-utilization "$ROLLOUT_GPU_MEMORY_UTILIZATION" --logprobs-mode processed_logprobs \
   --max-model-len 262144 --enable-scale-out --enable-mm-embeds --video-pruning-rate 0 \
   --limit-mm-per-prompt '{"video":1}' \
   --weight-transfer-config '{"backend":"nccl"}'
@@ -307,6 +314,8 @@ Resolved configuration files also live under `<output_root>/.run-configs/`. Save
 The split date and run date are independent.
 
 After training, the exporter merges the best adapter into the base weights.
+The exporter rejects missing, extra, or incorrectly shaped adapter tensors before merging.
+The export manifest records adapter completeness separately from the offline reload check.
 Distributed workers shut down before the CPU export. Reserve host RAM for the complete model and its reload check.
 If export fails after saving the adapter, retry:
 
