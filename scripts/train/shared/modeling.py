@@ -63,6 +63,9 @@ def load_lora_model(model_config, checkpoint_config, config):
     import transformers
     from scripts.train.shared.adapters import select_lora_targets, verify_adapter_parameters
     from peft import LoraConfig, get_peft_model
+    from scripts.train.shared.peft_compat import install_checkpoint_adapter_compatibility
+
+    install_checkpoint_adapter_compatibility()
 
     location = model_config["local_path"]
     options = {"local_files_only": True, "trust_remote_code": False}

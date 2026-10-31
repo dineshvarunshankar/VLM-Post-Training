@@ -26,7 +26,8 @@ def verify_export(run):
     run = Path(run)
     merged = run / "merged"
     report = read_json(local_file(merged, "export_manifest.json"))
-    if report.get("kind") != "merged_lora" or not report.get("reload_verified"):
+    if (report.get("kind") != "merged_lora" or not report.get("reload_verified")
+            or not report.get("adapter_completeness_verified")):
         raise ValueError("Run has no verified standalone merged model")
     if (merged / "adapter_config.json").exists():
         raise ValueError(
@@ -58,6 +59,12 @@ def export_merged(model, processor, run, selection):
         )
     if not (run / "adapter/adapter_config.json").is_file():
         raise ValueError("Save the selected adapter before exporting merged weights")
+    from peft.utils.save_and_load import load_peft_weights
+    from scripts.train.shared.peft_compat import validate_adapter_state
+
+    adapter_tensors = validate_adapter_state(
+        model, load_peft_weights(str(run / "adapter"), device="cpu", local_files_only=True)
+    )
     model.eval()
     inputs = processor.tokenizer("Return JSON.", return_tensors="pt")
     device = next(model.parameters()).device
@@ -112,6 +119,8 @@ def export_merged(model, processor, run, selection):
             {
                 "kind": "merged_lora",
                 "reload_verified": True,
+                "adapter_completeness_verified": True,
+                "adapter_tensor_count": adapter_tensors,
                 "verification": "offline reload and text-logit comparison",
                 "selection": selection,
                 "adapter_files": file_records(run / "adapter"),
