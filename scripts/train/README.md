@@ -417,6 +417,24 @@ After training, the exporter merges the best adapter into the base weights.
 The exporter rejects missing, extra, or incorrectly shaped adapter tensors before merging.
 The export manifest records adapter completeness separately from the offline reload check.
 Distributed workers shut down before the CPU export. Reserve host RAM for the complete model and its reload check.
+Reload verification compares text logits; it does not verify video inference.
+
+Runtime compatibility helpers are not stored in exported weights.
+For Gemma video inference with Transformers 5.21, install the frame-count helper after loading the model.
+For CPU Qwen inference with `fla-core` installed, use the attention context around the forward call:
+
+```python
+from scripts.train.shared.video_compat import install_video_frame_compatibility
+from scripts.train.shared.attention_compat import cpu_export_attention
+
+install_video_frame_compatibility(model)
+with cpu_export_attention(model):
+    outputs = model(**inputs)
+```
+
+These helpers leave other model families unchanged. The training loader and export verification apply them where required.
+vLLM uses its own model implementations.
+
 If export fails after saving the adapter, retry:
 
 ```bash

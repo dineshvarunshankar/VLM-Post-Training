@@ -64,6 +64,7 @@ def load_lora_model(model_config, checkpoint_config, config):
     from scripts.train.shared.adapters import select_lora_targets, verify_adapter_parameters
     from peft import LoraConfig, get_peft_model
     from scripts.train.shared.peft_compat import install_checkpoint_adapter_compatibility
+    from scripts.train.shared.video_compat import install_video_frame_compatibility
 
     install_checkpoint_adapter_compatibility()
 
@@ -85,6 +86,7 @@ def load_lora_model(model_config, checkpoint_config, config):
         attn_implementation=config.get("attention", "sdpa"),
         **options,
     )
+    install_video_frame_compatibility(model)
     model.config.use_cache = False
     targets, groups = select_lora_targets(model)
     model = get_peft_model(
