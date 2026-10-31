@@ -1,9 +1,16 @@
 --- a/model_executor/models/gemma4_mm.py
 +++ b/model_executor/models/gemma4_mm.py
-@@ -126,6 +126,18 @@
+@@ -126,6 +126,25 @@
      return None, False
- 
- 
+
+
++def _get_video_max_frames(video_opts: VideoDummyOptions | None) -> int:
++    """Use the explicit profiling bound instead of capping it at the default."""
++    if isinstance(video_opts, VideoDummyOptions) and video_opts.num_frames is not None:
++        return video_opts.num_frames
++    return _VIDEO_MAX_FRAMES
++
++
 +def _get_video_max_soft_tokens(merged_kwargs: Mapping[str, object]) -> int:
 +    """Resolve the video-only frame budget without changing image settings."""
 +    video_kwargs = merged_kwargs.get("videos_kwargs", {})
@@ -19,26 +26,49 @@
  # ---------------------------------------------------------------------------
  # Input schema
  # ---------------------------------------------------------------------------
-@@ -274,7 +286,7 @@
+@@ -274,16 +293,11 @@
              # Audio max tokens from the processor's audio_seq_length.
              processor = self.get_hf_processor()
              tokens["audio"] = processor.audio_seq_length
 -        # Video: each frame ≤ 70 soft tokens + boi + eoi + ~6 ts tokens.
+-        num_frames = _VIDEO_MAX_FRAMES
 +        # Video: configured frame budget + boi + eoi + timestamp tokens.
-         num_frames = _VIDEO_MAX_FRAMES
          mm_config = self.ctx.model_config.get_multimodal_config()
          video_opts = mm_config.limit_per_prompt.get("video")
-@@ -283,7 +295,7 @@
-             and video_opts.num_frames is not None
-         ):
-             num_frames = min(num_frames, video_opts.num_frames)
+-        if (
+-            isinstance(video_opts, VideoDummyOptions)
+-            and video_opts.num_frames is not None
+-        ):
+-            num_frames = min(num_frames, video_opts.num_frames)
 -        tokens["video"] = num_frames * (_VIDEO_MAX_SOFT_TOKENS + 2 + 6)
++        num_frames = _get_video_max_frames(video_opts)
 +        tokens["video"] = num_frames * (_get_video_max_soft_tokens(merged_kwargs) + 2 + 6)
          return tokens
- 
+
      def get_data_parser(self) -> MultiModalDataParser:
-@@ -618,10 +630,10 @@
- 
+@@ -540,9 +554,17 @@
+
+         if num_videos > 0:
+             data["video"] = self._get_dummy_videos(
+-                width=img_width,
+-                height=img_height,
+-                num_frames=_VIDEO_MAX_FRAMES,
++                width=(
++                    video_overrides.width
++                    if video_overrides and video_overrides.width is not None
++                    else img_width
++                ),
++                height=(
++                    video_overrides.height
++                    if video_overrides and video_overrides.height is not None
++                    else img_height
++                ),
++                num_frames=_get_video_max_frames(video_overrides),
+                 num_videos=num_videos,
+                 overrides=video_overrides,
+             )
+@@ -618,10 +640,10 @@
+
          # ---- VIDEO HANDLING ----
          # Gemma4 decomposes video into timestamped image frames.
 -        # Each frame is processed with max_soft_tokens=70 through the
@@ -49,11 +79,11 @@
 +            video_max_soft_tokens = _get_video_max_soft_tokens(merged_kwargs)
              assert isinstance(videos, list)
              processor = self.info.get_hf_processor()
- 
-@@ -650,12 +662,13 @@
+
+@@ -650,12 +672,13 @@
                  frame_indices = metadata.get("frames_indices", list(range(len(frames))))
                  timestamps = [idx / fps for idx in frame_indices]
- 
+
 -                # Process frames as images with max_soft_tokens=70
 +                # Process video frames through the image processor.
                  video_mm_kwargs = dict(hf_processor_mm_kwargs)
@@ -63,10 +93,10 @@
 -                video_mm_kwargs["max_soft_tokens"] = _VIDEO_MAX_SOFT_TOKENS
 +                video_mm_kwargs["videos_kwargs"] = {}
 +                video_mm_kwargs["max_soft_tokens"] = video_max_soft_tokens
- 
+
                  dummy_prompt = ("\t" + processor.image_token) * len(frames)
- 
-@@ -679,7 +692,7 @@
+
+@@ -679,7 +702,7 @@
                  for img in frames:
                      w, h = img.size
                      n = self.info._compute_num_soft_tokens(
@@ -74,8 +104,26 @@
 +                        w, h, max_soft_tokens=video_max_soft_tokens
                      )
                      num_soft_per_frame.append(n)
- 
-@@ -2289,7 +2302,9 @@
+
+@@ -1679,7 +1702,7 @@
+                 "gather_indices",
+             ],
+             out_hidden_size=self.config.text_config.hidden_size,
+-            max_frames_per_video=_VIDEO_MAX_FRAMES,
++            max_frames_per_video=self.get_max_frames_per_video(),
+             padding_logics={
+                 "pixel_values": pad_pixel_values,
+                 "pixel_position_ids": pad_pixel_position_ids,
+@@ -1705,7 +1728,7 @@
+         raise ValueError("Unsupported modality in mm_kwargs")
+
+     def get_max_frames_per_video(self) -> int:
+-        return _VIDEO_MAX_FRAMES
++        return _get_video_max_frames(self.multimodal_config.limit_per_prompt.get("video"))
+
+     def get_encoder_cudagraph_item_specs(
+         self,
+@@ -2289,7 +2312,9 @@
                          max_soft_tokens = val
              else:
                  pixel_values_key = "pixel_values_videos"
@@ -83,33 +131,44 @@
 +                max_soft_tokens = _get_video_max_soft_tokens(
 +                    self.multimodal_config.mm_processor_kwargs or {}
 +                )
- 
+
              tower_tokens = max_soft_tokens * pooling_k2 if modality == "image" else None
              connector_tokens = num_mm_embeds
 --- a/model_executor/models/gemma4_unified.py
 +++ b/model_executor/models/gemma4_unified.py
-@@ -35,7 +35,7 @@
+@@ -34,8 +34,8 @@
+ from vllm.model_executor.models.gemma4 import Gemma4ForCausalLM
  from vllm.model_executor.models.gemma4_mm import (
      _SUPPORTED_SOFT_TOKENS,
-     _VIDEO_MAX_FRAMES,
+-    _VIDEO_MAX_FRAMES,
 -    _VIDEO_MAX_SOFT_TOKENS,
 +    _get_video_max_soft_tokens,
++    _get_video_max_frames,
      Gemma4AudioInputs,
      Gemma4DummyInputsBuilder,
      Gemma4ForConditionalGeneration,
-@@ -182,7 +182,7 @@
-             and video_opts.num_frames is not None
-         ):
-             num_frames = min(num_frames, video_opts.num_frames)
+@@ -174,15 +174,10 @@
+         if config.audio_config is not None:
+             processor = self.get_hf_processor()
+             tokens["audio"] = processor.audio_seq_length
+-        num_frames = _VIDEO_MAX_FRAMES
+         mm_config = self.ctx.model_config.get_multimodal_config()
+         video_opts = mm_config.limit_per_prompt.get("video")
+-        if (
+-            isinstance(video_opts, VideoDummyOptions)
+-            and video_opts.num_frames is not None
+-        ):
+-            num_frames = min(num_frames, video_opts.num_frames)
 -        tokens["video"] = num_frames * (_VIDEO_MAX_SOFT_TOKENS + 2 + 6)
++        num_frames = _get_video_max_frames(video_opts)
 +        tokens["video"] = num_frames * (_get_video_max_soft_tokens(merged_kwargs) + 2 + 6)
          return tokens
- 
+
      def _compute_num_soft_tokens(
-@@ -345,6 +345,10 @@
+@@ -345,6 +340,10 @@
          gen_cfg = vllm_config.model_config.try_get_generation_config()
          self._suppress_token_ids = gen_cfg.get("suppress_tokens") if gen_cfg else None
- 
+
 +    def _clear_mm_prefix_for_full_attn_layers(self) -> None:
 +        """Keep HF-reference vision blocks bidirectional in full layers."""
 +        return

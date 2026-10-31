@@ -284,6 +284,28 @@ uv run --group rl python scripts/train/patch_vllm.py
 The patches require the system `patch` command and vLLM 0.30.0.
 Apply them again after recreating the environment. Use `--group rl` for training commands to retain this dependency group.
 
+If an existing environment has the earlier Gemma patch, stop its serving processes before upgrading.
+The current patch checker rejects a partially upgraded source tree.
+Retrieve the exact old patch, verify its checksum, and reverse only that patch:
+
+```bash
+(
+set -e
+OLD_GEMMA_PATCH="$(mktemp)"
+git show 4ec63f2:scripts/train/rl/rollout/patches/gemma-video-budget.patch > "$OLD_GEMMA_PATCH"
+printf '%s  %s\n' 3deaeacd01ca33264d8ab357bf531e4db1e35832b03f2ca53ed7869a10ee4c2d "$OLD_GEMMA_PATCH" | sha256sum --check
+VLLM_PACKAGE="$(uv run --group rl python -c 'import importlib.util,pathlib; print(pathlib.Path(importlib.util.find_spec("vllm").origin).parent)')"
+patch --batch --fuzz=0 --reverse --dry-run -p1 -d "$VLLM_PACKAGE" -i "$OLD_GEMMA_PATCH"
+patch --batch --fuzz=0 --reverse -p1 -d "$VLLM_PACKAGE" -i "$OLD_GEMMA_PATCH"
+uv run --group rl python scripts/train/patch_vllm.py --apply
+uv run --group rl python scripts/train/patch_vllm.py
+rm "$OLD_GEMMA_PATCH"
+)
+```
+
+Do not reverse the video-placeholder patch. If either dry-run or verification fails, stop and inspect the source tree.
+Fresh environments use the normal installation commands above.
+
 The locked environment includes `fla-core` for Qwen's gated-delta attention kernels.
 Kernel compilation needs a compatible CUDA toolkit and C++ compiler.
 
@@ -343,6 +365,28 @@ Reserve GPU memory for weight-transfer buffers and NCCL communicators when choos
 Install `ffprobe` and add its directory to `PATH` before RL.
 Video-geometry checks require this executable, in addition to FFmpeg shared libraries.
 
+Derive the server's profiling flags from the same run and pinned processor used by training.
+Set `PROFILE_VIDEO_FRAMES` to the verified maximum sampled frame count for the full dataset.
+The frozen PSC answer-only split dated 2026-10-31 has a maximum of 150 frames.
+For Gemma, this bound controls startup profiling; it does not truncate input videos or change sampling.
+Qwen derives its reservation from the whole-video pixel budget and does not use a frame override.
+
+```bash
+RUN_CONFIG=/path/to/run.yaml
+PROFILE_VIDEO_FRAMES=150
+ROLLOUT_PROCESSOR_KWARGS="$(uv run --group rl python -m scripts.train.rl.rollout.video_profile --run "$RUN_CONFIG" --profile-video-frames "$PROFILE_VIDEO_FRAMES" --field mm_processor_kwargs)"
+ROLLOUT_MM_LIMITS="$(uv run --group rl python -m scripts.train.rl.rollout.video_profile --run "$RUN_CONFIG" --profile-video-frames "$PROFILE_VIDEO_FRAMES" --field limit_mm_per_prompt)"
+```
+
+The helper loads processor metadata, not model weights. It does not start a server or training.
+Qwen uses the full configured video pixel budget and disables per-frame pixel capping, matching the training processor.
+For the current budget, its encoder reservation is 122,880 tokens; the frozen metadata maximum is 122,661.
+Gemma uses 280 tokens per frame and a profiling image of 960 × 672 pixels.
+With 150 frames, its reservation is 43,200 tokens, including delimiters and timestamp allowance.
+The updated patch also applies this frame bound to dummy inputs and encoder graph metadata.
+These reservations do not prove GPU capacity or throughput. Run the bounded checks on the selected devices.
+A healthy server with default processor settings can still reject full videos because its encoder cache is too small.
+
 Example server on GPUs 4–7:
 
 ```bash
@@ -352,7 +396,7 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 VLLM_SERVER_DEV_MODE=1 uv run --group rl vllm serve
   --data-parallel-size "$ROLLOUT_DP" --max-num-seqs "$ROLLOUT_MAX_SEQS" \
   --gpu-memory-utilization "$ROLLOUT_GPU_MEMORY_UTILIZATION" --logprobs-mode processed_logprobs \
   --max-model-len 262144 --enable-scale-out --enable-mm-embeds --video-pruning-rate 0 \
-  --limit-mm-per-prompt '{"video":1}' \
+  --limit-mm-per-prompt "$ROLLOUT_MM_LIMITS" --mm-processor-kwargs "$ROLLOUT_PROCESSOR_KWARGS" \
   --weight-transfer-config '{"backend":"nccl"}'
 ```
 
