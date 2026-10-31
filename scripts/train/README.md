@@ -1,6 +1,6 @@
 # Answer-only training
 
-[Repository guide](../../README.md) · [Preprocessing](../preprocess/README.md)
+[Repository guide](../../README.md) · [Preprocessing](../preprocess/README.md) · [Verified SFT preflight and limits](PREFLIGHT.md)
 
 Train RGB video-language models on human medical answers with TRL, Transformers, and PEFT LoRA.
 Choose SFT, RL only, or SFT followed by RL. Medical answers use category JSON with integer `0`/`1` values.
