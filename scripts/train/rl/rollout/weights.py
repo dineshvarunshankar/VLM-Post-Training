@@ -19,6 +19,22 @@ def _weight_name(name):
             .replace('.base_layer', ''))
 
 
+def _checkpoint_weight_name(name, model_type):
+    name = _weight_name(name)
+    if model_type == 'gemma4_unified':
+        # Transformers 5.21 combines the legacy vision embedder and projection
+        # into embed_vision. vLLM 0.30 consumes the original checkpoint layout.
+        # Reverse only the six Gemma Unified load renames, at module boundaries.
+        for module in ('patch_ln1', 'patch_dense', 'patch_ln2', 'pos_embedding', 'pos_norm'):
+            prefix = 'model.embed_vision.' + module
+            if name == prefix or name.startswith(prefix + '.'):
+                return 'model.vision_embedder.' + name.removeprefix('model.embed_vision.')
+        prefix = 'model.embed_vision.multimodal_embedder.embedding_projection'
+        if name == prefix or name.startswith(prefix + '.'):
+            return 'model.embed_vision.embedding_projection' + name[len(prefix):]
+    return name
+
+
 def iter_policy_weights(model):
     """Gather and combine one parameter at a time on every participating rank.
 
@@ -48,11 +64,12 @@ def iter_policy_weights(model):
     if not layers:
         raise ValueError('Policy has no supported LoRA layers')
 
+    model_type = getattr(getattr(model.get_base_model(), 'config', None), 'model_type', None)
     visited = set()
     for name, parameter in model.named_parameters():
         if any(part.startswith('lora_') for part in name.split('.')):
             continue
-        output_name = _weight_name(name)
+        output_name = _checkpoint_weight_name(name, model_type)
         if output_name in visited:
             raise ValueError(f'Duplicate rollout weight name: {output_name}')
         visited.add(output_name)
