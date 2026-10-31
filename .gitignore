@@ -13,3 +13,6 @@ slurm_logs/
 
 # Local reference notes.
 .local-docs/
+
+# Local ABCI access and allocation notes; never commit the contents.
+/docs/ABCI.local.md
