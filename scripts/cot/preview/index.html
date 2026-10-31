@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CoT · Input review</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<header><a class="brand" href="/">TRIAGE <span>/ Annotation workspace</span></a><span class="badge">READ-ONLY PREVIEW</span></header>
+<main>
+<div class="intro"><div><p class="eyebrow">COT ANNOTATION · RGB</p><h1 id="task-title">CoT prompt review</h1><p class="subtitle">Review the complete input before generating an annotation.</p></div><span id="task-mode" class="task-note">Loading…</span></div>
+<div class="layout">
+<aside>
+<section class="card"><label for="task">Annotation task</label><select id="task" disabled><option>Loading tasks…</option></select><p id="task-note" class="note"></p><p id="status" class="status" role="status">Loading the prompt template…</p></section>
+<section id="clip-card" class="card source"><h2>Choose a prepared clip</h2><label for="search">Find a clip</label><input id="search" type="search" placeholder="Search by clip ID…"><label for="clip">Completed native RGB clips</label><select id="clip"><option value="">Loading clips…</option></select><p id="clip-count" class="muted" role="status"></p><button id="load" disabled>Review selected clip <span>↗</span></button></section>
+<section id="media-card" class="card media"><div class="section-title"><h2>Video supplied to Gemini</h2><span class="pill">MP4</span></div><div id="video-empty" class="empty">Select a clip to inspect its video and actual annotation inputs.</div><video id="video" controls preload="metadata" hidden></video><p id="video-id" class="filename"></p><p class="muted">This is the prepared video with the subject-box overlay. This player does not reproduce Gemini’s internal frame sampling.</p></section>
+<section class="card"><h2 id="inputs-title">Inputs</h2><pre id="input-contract"></pre></section>
+<section id="settings-card" class="card"><h2>Generation settings</h2><dl id="settings" class="contract"></dl><p class="muted">Settings are shown for review. No upload or model request is made.</p></section>
+</aside>
+<div class="prompts">
+<div class="flow"><span>System instructions</span><b>+</b><span>Video + clip inputs</span><b>→</b><span>JSON response</span></div>
+<section class="card"><div class="section-title"><div><p class="eyebrow">SYSTEM MESSAGE</p><h2>What we ask the model to do</h2></div><span class="pill">Exact prompt</span></div><p class="muted">The complete system instructions from the selected YAML, without shortening or rewriting.</p><pre id="system">Loading…</pre></section>
+<section class="card"><div class="section-title"><div><p class="eyebrow">USER MESSAGE · AFTER THE VIDEO</p><h2>The clip-specific inputs</h2></div><span id="input-kind" class="pill">Template</span></div><p id="input-note" class="muted">Choose a clip to replace the placeholders with its actual metadata, viewpoint, counts, and human transcription.</p><pre id="user"></pre></section>
+<section class="card"><div class="section-title"><div><p class="eyebrow">EXPECTED OUTPUT</p><h2 id="output-title">Scene description</h2></div><span class="pill">JSON</span></div><div class="output-fields"><div id="reasoning-field" hidden><code>reasoning_process</code><p>An evidence-grounded rationale following the selected task instructions.</p></div><div><code>answer</code><p id="answer-description"></p></div></div><p id="schema-note" class="muted"></p><pre id="schema"></pre></section>
+<details id="request-card" class="card"><summary>Complete assembled request <span>Inspect JSON</span></summary><p class="muted">The exact request structure passed to LiteLLM. The upload URI is a placeholder here because this review never uploads a video. LiteLLM performs provider-specific serialization.</p><pre id="request">Select a clip to see the assembled request.</pre></details>
+<p class="footer-note">All four YAML templates are available for review. Clip-specific requests are currently implemented for native scene description only.</p>
+</div></div>
+</main><script src="/app.js"></script>
+</body></html>

@@ -1,0 +1,51 @@
+extends: ../recipes/sft.yaml
+
+dataset:
+  modality: RGB
+  sources:
+    native: true
+    stabilized: true
+
+mixture:
+  strategy: all_medical_plus_auxiliary
+  shuffle: true
+  resample_each_epoch: true
+
+  medical_vqa:
+    enabled: true
+    sampling: all_valid
+    excluded_categories: [subject_check]
+    context_sources: [native]
+
+  camera_view:
+    enabled: true
+    sources: [native]
+    questions_per_video_per_epoch: 1
+
+  counting:
+    enabled: true
+    sources: [native]
+    questions_per_video_per_epoch: 1
+    timestamp_sampling: random_annotated
+
+  subject_localization:
+    enabled: true
+    sources: [native, stabilized]
+    questions_per_video_per_epoch: 1
+
+  label_questions:
+    enabled: true
+    excluded_categories: [subject_check, context]
+    sampling:
+      observables: 2
+      assessment: 2
+      single_subcategory: 1
+      prefer_positive_negative_pair: true
+      without_replacement: true
+      cap_to_available_labels: true
+    grounding:
+      spatial:
+        enabled: true
+      temporal:
+        enabled: true
+        temporal_labels_only: true

@@ -1,0 +1,74 @@
+name: label_selection_grounding
+version: "1.0.0"
+
+system_prompt: |
+  You are a visual assessment assistant.
+
+  - Assess the subject marked by the green bounding box.
+  - Determine whether the requested label should be selected using the supplied video, category definitions, and selection rules.
+  - Use integer 1 if the label should be selected and integer 0 otherwise.
+  - If selected, provide the supporting evidence points and their timestamps. Otherwise, return an empty evidence array.
+  - Return evidence points as integer [x, y] coordinates on a 0–1000 scale.
+  - [0, 0] is the top-left corner; [1000, 1000] is the bottom-right corner.
+  - Output a timestamp with each evidence point to identify its location in the video.
+  - Include the anatomical slot when specified in the evidence requirements.
+  - Use clip-relative MM:SS timestamps. Include fractional seconds only when
+    needed to distinguish timing within a second and supported by the video timing.
+    Do not invent subsecond precision.
+  - Return one JSON object containing answer and evidence. The answer must contain only the requested label key.
+
+user_prompt: |
+  CAMERA VIEWPOINT
+  {viewpoint}
+
+  CATEGORY: {category_name}
+
+  LABEL DEFINITIONS
+  {definitions}
+
+  SELECTION RULES
+  {selection_rules}{assessment_instruction}
+
+  EVIDENCE REQUIREMENTS
+  {evidence_requirements}
+
+  Should `{label}` be selected for the designated subject, according to the supplied definitions and selection rules? If selected, locate its supporting evidence.
+
+response_schema:
+  type: object
+  properties:
+    answer:
+      type: object
+      properties:
+        "{label}":
+          type: integer
+          enum: [0, 1]
+      required:
+        - "{label}"
+      additionalProperties: false
+    evidence:
+      type: array
+      items:
+        type: object
+        properties:
+          slot:
+            type: string
+          timestamp:
+            type: string
+            pattern: '^[0-9]{2}:[0-5][0-9](\.[0-9]{1,3})?$'
+          point:
+            type: array
+            items:
+              type: integer
+              minimum: 0
+              maximum: 1000
+            minItems: 2
+            maxItems: 2
+        required:
+          - timestamp
+          - point
+        additionalProperties: false
+  required:
+    - answer
+    - evidence
+  additionalProperties: false

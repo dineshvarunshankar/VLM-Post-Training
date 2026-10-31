@@ -1,0 +1,24 @@
+name: counting
+version: "1.0.0"
+
+system_prompt: |
+  You are a visual counting assistant.
+
+  - Count the people visible at the specified timestamp.
+  - The green bounding box identifies the designated subject.
+  - Include the designated subject and other visible people.
+  - Return one JSON object containing the count as an integer.
+
+user_prompt: |
+  At {timestamp}, how many people are visible, including
+  the designated subject?
+
+response_schema:
+  type: object
+  properties:
+    count:
+      type: integer
+      minimum: 0
+  required:
+    - count
+  additionalProperties: false

@@ -1,0 +1,112 @@
+--- a/vllm/entrypoints/scale_out/token_in_token_out/protocol.py
++++ b/vllm/entrypoints/scale_out/token_in_token_out/protocol.py
+@@ -6,6 +6,7 @@
+     BaseModel,
+     Field,
+     PrivateAttr,
++    StrictBool,
+     field_validator,
+     model_validator,
+ )
+@@ -39,9 +40,17 @@
+     length: int = Field(gt=0)
+     """Number of placeholder tokens."""
+ 
+-    # TODO: add ``is_embed: list[bool] | None`` once the /generate side
+-    # consumes features — some models (e.g. Qwen-VL) use sparse
+-    # placeholder masks that cannot be recomputed from offset+length alone.
++    is_embed: list[StrictBool] | None = None
++    """Positions in this range occupied by visual embeddings rather than text."""
++
++    @model_validator(mode="after")
++    def validate_embedding_mask(self):
++        if self.is_embed is not None:
++            if len(self.is_embed) != self.length:
++                raise ValueError("Embedding mask length must equal placeholder length")
++            if not any(self.is_embed):
++                raise ValueError("Embedding mask must contain at least one visual token")
++        return self
+ 
+ 
+ def _has_serialized_mm_items(
+--- a/vllm/entrypoints/scale_out/token_in_token_out/mm_features.py
++++ b/vllm/entrypoints/scale_out/token_in_token_out/mm_features.py
+@@ -6,6 +6,8 @@
+ 
+ from collections.abc import Callable, Collection, Sequence
+ from typing import cast
++
++import torch
+ 
+ from vllm.entrypoints.scale_out.token_in_token_out.mm_serde import (
+     decode_mm_kwargs_item,
+@@ -24,6 +26,7 @@
+ from vllm.multimodal.inputs import (
+     MultiModalKwargsItem,
+     MultiModalKwargsOptionalItems,
++    PlaceholderRange,
+ )
+ 
+ 
+@@ -129,7 +132,11 @@
+     ]
+     return {
+         modality: [
+-            PlaceholderRangeInfo(offset=p.offset, length=p.length) for p in ranges
++            PlaceholderRangeInfo(
++                offset=p.offset,
++                length=p.length,
++                is_embed=p.is_embed.tolist() if p.is_embed is not None else None,
++            ) for p in ranges
+         ]
+         for modality, ranges in raw_placeholders.items()
+     }
+@@ -169,3 +176,23 @@
+         kwargs_data=kwargs_data,
+         mm_metadata=mm_metadata,
+     )
++
++
++def placeholder_ranges_from_features(
++    features: MultiModalFeatures,
++) -> dict[str, list[PlaceholderRange]]:
++    """Restore sparse visual positions without assigning embeddings to timestamps."""
++    return {
++        modality: [
++            PlaceholderRange(
++                offset=p.offset,
++                length=p.length,
++                is_embed=(
++                    torch.tensor(p.is_embed, dtype=torch.bool)
++                    if p.is_embed is not None else None
++                ),
++            )
++            for p in ranges
++        ]
++        for modality, ranges in features.mm_placeholders.items()
++    }
+--- a/vllm/entrypoints/scale_out/token_in_token_out/serving.py
++++ b/vllm/entrypoints/scale_out/token_in_token_out/serving.py
+@@ -47,6 +47,7 @@
+ from .mm_features import (
+     mm_kwargs_from_features,
+     placeholder_ranges_from_engine_input,
++    placeholder_ranges_from_features,
+ )
+ from .protocol import (
+     GenerateRequest,
+@@ -171,13 +172,7 @@
+                 [prompt]
+             )
+         elif features := request.features:
+-            # Convert PlaceholderRangeInfo → PlaceholderRange per modality.
+-            mm_placeholders: dict[str, list[PlaceholderRange]] = {
+-                modality: [
+-                    PlaceholderRange(offset=p.offset, length=p.length) for p in ranges
+-                ]
+-                for modality, ranges in features.mm_placeholders.items()
+-            }
++            mm_placeholders = placeholder_ranges_from_features(features)
+ 
+             # Deserialize full tensor data and optional metadata-only data.
+             # Metadata-only items are valid when ec_transfer_params is set.

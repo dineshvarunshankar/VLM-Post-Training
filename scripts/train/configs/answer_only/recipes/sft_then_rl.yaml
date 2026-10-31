@@ -1,0 +1,8 @@
+extends: ../shared/gspo.yaml
+recipe: sft_then_rl
+experiment_config: ../experiments/rgb_combined.yaml
+sft_config: ../experiments/rgb_combined.yaml
+initialization:
+  source: best_sft_checkpoint
+  continue_adapter: true
+  fresh_optimizer: true

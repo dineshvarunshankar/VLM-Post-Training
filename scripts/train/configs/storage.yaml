@@ -1,0 +1,14 @@
+cloud:
+  source_container: vlm-zoo
+  source_prefix: weights
+  output_container: vlm-zoo
+  output_prefix: finetuned
+local:
+  base_weights: weights
+  finetuned: finetuned
+wandb:
+  entity: dkandiya-carnegie-mellon-university
+  project: Triage VLM
+  mode: online
+  log_model: 'false'
+  watch: 'false'

@@ -1,0 +1,508 @@
+categories:
+  severe_hemorrhage:
+    name: SEVERE HEMORRHAGE
+    subcategories:
+      observables:
+        selection_rule: multi_select_or_none
+        cues:
+        - name: active_bleeding_observed
+          definition: Blood is visibly emerging, oozing, dripping, spurting, squirting, or otherwise flowing
+            from a wound or body opening during the observation interval, or the visible blood area is
+            actively expanding across frames. Do not select solely for a static blood stain, dried blood,
+            or an existing blood pool without visible ongoing flow.
+        - name: blood_pooling_observed
+          definition: A visible accumulation of blood forming a pool or puddle on the subject, ground,
+            or another surface near the subject, with the blood clearly originating from the subject.
+        - name: extensive_blood_on_body_observed
+          definition: Visible blood is present on clothing and/or exposed skin and covers most of the
+            abdomen or most of the chest.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: hemorrhage_assessed_absent
+          definition: A sufficiently complete, clear view of the subject and nearby ground/surfaces shows
+            no active bleeding, blood pooling, or extensive blood spread.
+        - name: hemorrhage_not_assessable
+          definition: The subject's body cannot be reliably inspected for bleeding due to being occluded,
+            off-frame, poorly lit, blurry, or otherwise visually inadequate.
+  respiratory_distress:
+    name: RESPIRATORY DISTRESS
+    subcategories:
+      observables:
+        selection_rule: multi_select_or_none
+        cues:
+        - name: tripod_position_observed
+          definition: The subject is leaning forward with hands, elbows, or arms pressing against knees,
+            thighs, or a nearby surface to support upper-body weight.
+        - name: labored_breathing_observed
+          definition: No breathing mask is observed on the subject, and visible, exaggerated muscular
+            effort in the torso or neck accompanies breathing, including heavy chest/shoulder rise and
+            fall or visible strain in neck accessory muscles.
+        - name: gasping_motion_observed
+          definition: No breathing mask is observed on the subject, and repeated wide opening and closing
+            of the mouth occurs across multiple frames, often with visible head or neck extension and
+            forceful breathing motion.
+        - name: wide_open_mouth_observed
+          definition: The subject's mouth is visibly wide open, with a pronounced jaw opening that is
+            clearly greater than ordinary parted lips or a relaxed open mouth.
+        - name: rapid_shallow_breathing_observed
+          definition: No breathing mask is observed on the subject, and repeated rapid breathing occurs
+            across the observation interval, with closely spaced breaths and only small visible respiratory
+            movements of the chest, abdomen, shoulders, or upper torso.
+        - name: abnormal_head_neck_posture_observed
+          definition: The subject shows no visible body or head motion during the observation interval,
+            and is either slumped forward with sustained forward jaw positioning, or has the neck bent
+            forward, bent too far backward, or bent sideways. Do not select for brief head turns, ordinary
+            looking up or down, or momentary changes in head position.
+        - name: agitation_observed
+          definition: Repeated restless movements are visible, such as thrashing, repeatedly pulling at
+            clothing or surroundings, or repeated jerky movements of the limbs, torso, or head.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: respiratory_distress_assessed_absent
+          definition: A clear view over a sufficient observation interval shows no visible respiratory-distress
+            signs, including tripod posture, labored breathing, gasping, persistent wide-open mouth, rapid
+            shallow breathing, abnormal head/neck posture, or agitation. Also select when an airway device
+            or breathing mask is visibly positioned at, inserted into, or secured to the subject's mouth
+            or nose, indicating that airway treatment has already been provided, provided that no visible
+            respiratory-distress signs persist.
+        - name: respiratory_distress_not_assessable
+          definition: The chest/torso, head/face, or overall posture cannot be observed adequately enough
+            to assess respiratory distress.
+  trauma_head_neck:
+    name: TRAUMA - HEAD/NECK
+    subcategories:
+      observables:
+        selection_rule: multi_select_or_none
+        cues:
+        - name: swelling_bruising_or_deformity_head_neck_observed
+          definition: Visible bruising, abnormal discoloration, swelling, or structural deformity of the
+            head, face, or neck (such as a depressed skull, displaced jaw, or facial asymmetry) that is
+            distinct from an amputation, skin break or burn in the region.
+        - name: skin_break_head_neck_observed
+          definition: A visible break in the skin of the head, face, or neck that is open to the environment,
+            such as a cut, visible gap in the skin, exposed underlying tissue, or puncture opening.
+        - name: blood_visible_at_head_neck_observed
+          definition: Visible blood located directly at the injury site on the head, face, or neck, including
+            bleeding from the wound itself or fresh blood pooling at the wound location.
+        - name: burn_head_neck_observed
+          definition: Visible signs of thermal or chemical injury to the head, face, or neck, such as
+            abnormal skin discoloration (reddened, whitened, darkened, or charred) and/or visible texture
+            change (blistered, shiny, dry, cracked, or charred).
+        - name: bandage_head_neck_observed
+          definition: A visible bandage, dressing, gauze, or cloth wrap applied specifically to the head,
+            face, or neck of the subject.
+        - name: guarding_head_neck_observed
+          definition: The subject places or holds one or both hands against the head, face, or neck in
+            a protective or guarding posture, such as pressing, holding, cradling, or covering the region.
+        - name: amputation_head_neck_observed
+          definition: A large portion of the head is missing or else the neck is mostly or completely
+            severed, with visible blood at or around the disruption site.
+        - name: penetrating_injury_eye_or_face_observed
+          definition: A foreign object is visibly entering, embedded in, or protruding from tissue of
+            the eye or face, or a clearly identifiable puncture/penetration opening is visible. Do not
+            select for shallow cuts, abrasions, bruising, swelling, blood alone, or an object merely resting
+            against the skin.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: head_neck_assessed_no_injury
+          definition: A clear, inspected view of the head, face, and neck region confirming the absence
+            of head injury observables.
+        - name: head_neck_not_assessable
+          definition: The head, face, or neck region is occluded, off-frame, obscured, or otherwise inadequately
+            visible to assess for injury.
+  trauma_torso:
+    name: TRAUMA - TORSO
+    subcategories:
+      observables:
+        selection_rule: multi_select_or_none
+        cues:
+        - name: swelling_bruising_or_deformity_torso_observed
+          definition: Visible bruising, abnormal discoloration, swelling, or structural deformity on the
+            torso (front or back) that is distinct from an amputation, skin break, or burn in the region.
+        - name: swelling_bruising_or_deformity_on_both_torso_surfaces_observed
+          definition: Visible bruising, abnormal discoloration, swelling, or structural deformity on both
+            surfaces of the torso (front and back) on the subject that is distinct from an amputation,
+            skin break, or burn in the region. If you select this label, also select `swelling_bruising_or_deformity_torso_observed`.
+        - name: skin_break_torso_observed
+          definition: A visible break in the skin of the torso (chest, abdomen, or back) that is open
+            to the environment, presenting as a gap or cut, exposed underlying or moist tissue, or a penetrating
+            wound at the injury site.
+        - name: blood_visible_at_torso_observed
+          definition: Visible blood located directly at or immediately surrounding an injury site on the
+            chest, abdomen, or back.
+        - name: blood_visible_on_both_torso_surfaces_observed
+          definition: Visible blood is present at injury sites on both the front and back surfaces of
+            the torso. For a non-standing subject, this also includes blood visibly wrapping around the
+            side of the torso such that it clearly extends onto both front and back surfaces. If you select
+            this label, also select `blood_visible_at_torso_observed`.
+        - name: burn_torso_observed
+          definition: Visible signs of thermal or chemical injury to the torso, such as abnormal skin
+            discoloration (reddened, whitened, darkened, or charred) and/or visible texture change (blistered,
+            shiny, dry, cracked, or charred).
+        - name: burn_on_both_torso_surfaces_observed
+          definition: Visible signs of thermal or chemical injury present on both surfaces of the torso
+            (front and back) on the subject, such as abnormal skin discoloration (reddened, whitened,
+            darkened, or charred) and/or visible texture change (blistered, shiny, dry, cracked, or charred).
+            If you select this label, also select `burn_torso_observed`.
+        - name: bandage_torso_observed
+          definition: A visible bandage, dressing, gauze, chest seal, or cloth wrap applied specifically
+            to the torso.
+        - name: bandage_on_both_torso_surfaces_observed
+          definition: A visible bandage, dressing, gauze, chest seal, or cloth wrap present on both surfaces
+            of the torso (front and back) on the subject. Includes any bandage that appears to wrap around
+            the entire torso. If you select this label, also select `bandage_torso_observed`.
+        - name: guarding_torso_observed
+          definition: The subject visibly presses, clutches, holds, or covers the torso with one or both
+            hands in a guarding posture.
+        - name: guarding_on_both_torso_surfaces_observed
+          definition: The subject visibly presses, clutches, holds, or covers BOTH the front and back
+            surfaces of the torso at the same time, with one hand or arm directed toward each surface.
+            If you select this label, also select `guarding_torso_observed`.
+        - name: devastating_torso_trauma_observed
+          definition: A portion of the torso is visibly missing or traumatically disrupted, with visible
+            blood at or around the disruption site.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: torso_assessed_no_injury
+          definition: A clear, inspected view of the torso confirming the absence of torso injury observables.
+        - name: torso_not_assessable
+          definition: The torso is occluded, off-frame, obscured by position, or otherwise inadequately
+            visible to assess for injury.
+  trauma_arms_and_hands:
+    name: TRAUMA - ARMS AND HANDS
+    subcategories:
+      observables:
+        selection_rule: multi_select_or_none
+        cues:
+        - name: swelling_bruising_or_deformity_arm_or_hand_observed
+          definition: Visible bruising, abnormal discoloration, swelling, or structural deformity on an
+            arm or hand that is distinct from a skin break, burn, or an amputation in the region.
+        - name: swelling_bruising_or_deformity_on_both_arms_or_hands_observed
+          definition: Visible bruising, abnormal discoloration, swelling, or structural deformity present
+            on both arms or hands that is distinct from a skin break, burn, or an amputation in the region.
+            If you select this label, also select `swelling_bruising_or_deformity_arm_or_hand_observed`.
+        - name: skin_break_arm_or_hand_observed
+          definition: A visible break in the skin of an arm or hand that is open to the environment, presenting
+            as a gap or laceration, exposed underlying or moist tissue, or a penetrating wound at the
+            injury site.
+        - name: blood_visible_at_arm_or_hand_observed
+          definition: Visible blood located directly at the injury site on an arm or hand, including bleeding
+            from the wound itself or fresh blood pooling at the wound location.
+        - name: blood_visible_on_both_arms_or_hands_observed
+          definition: Visible blood is present on both arms or hands of the subject, including bleeding
+            from the wound itself or fresh blood pooling at the wound location. If you select this label,
+            also select `blood_visible_at_arm_or_hand_observed`.
+        - name: burn_arm_or_hand_observed
+          definition: Visible signs of thermal or chemical injury on an arm or hand, such as abnormal
+            skin discoloration (reddened, whitened, darkened, or charred) and/or visible texture change
+            (blistered, shiny, dry, cracked, or charred).
+        - name: burn_on_both_arms_or_hands_observed
+          definition: Visible signs of thermal or chemical injury present on both arms or hands of the
+            subject, such as abnormal skin discoloration (reddened, whitened, darkened, or charred) and/or
+            visible texture change (blistered, shiny, dry, cracked, or charred). If you select this label,
+            also select `burn_arm_or_hand_observed`.
+        - name: bandage_arm_or_hand_observed
+          definition: A visible bandage, dressing, gauze, or cloth wrap applied specifically to an arm
+            or hand.
+        - name: bandage_on_both_arms_or_hands_observed
+          definition: One or more visible bandages, dressings, gauze, or cloth wraps are present on the
+            arms or hands on both sides of the subject. If you select this label, also select `bandage_arm_or_hand_observed`.
+        - name: tourniquet_arm_or_hand_observed
+          definition: A tourniquet (improvised constricting band/device used to stop the flow of blood
+            to limb by applying localized, constricting pressure) or clearly identifiable tourniquet-like
+            constricting device visibly secured around an arm.
+        - name: tourniquet_on_both_arms_or_hands_observed
+          definition: Clearly identifiable tourniquets or tourniquet-like constricting devices on both
+            arms. Each tourniquet could be an improvised constricting band/device used to stop the flow
+            of blood to a limb by applying localized, constricting pressure. If you select this label,
+            also select `tourniquet_arm_or_hand_observed`.
+        - name: guarding_arm_or_hand_observed
+          definition: The subject visibly uses the opposite hand to hold, cradle, support, or guard an
+            arm or hand.
+        - name: guarding_on_both_arms_or_hands_observed
+          definition: The subject visibly guards both arms or hands, with each arm or hand being held,
+            supported, cradled, or otherwise guarded. If you select this label, also select `guarding_arm_or_hand_observed`.
+        - name: amputation_arm_or_hand_observed
+          definition: A portion of an arm or hand is visibly missing or severed, with blood at/around
+            the disruption region.
+        - name: amputation_on_both_arms_or_hands_observed
+          definition: Visible amputations or missing/severed limb portions are present on both arms or
+            hands of the subject, with blood at/around each disruption region. If you select this label,
+            also select `amputation_arm_or_hand_observed`.
+        - name: penetrating_injury_arm_or_hand_observed
+          definition: A foreign object is visibly entering, embedded in, or protruding from tissue of
+            an arm or hand, or a clearly identifiable puncture/penetration opening is visible. Do not
+            select for shallow cuts, abrasions, bruising, swelling, deformity, blood alone, or an object
+            merely contacting the skin.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: arms_and_hands_assessed_no_injury
+          definition: A clear, inspected view of both arms and hands confirming the absence of arm and
+            hand injury observables.
+        - name: arms_and_hands_not_assessable
+          definition: Arms or hands are occluded, off-frame, obscured by equipment, or otherwise inadequately
+            visible to assess for injury.
+  trauma_legs_and_feet:
+    name: TRAUMA - LEGS AND FEET
+    subcategories:
+      observables:
+        selection_rule: multi_select_or_none
+        cues:
+        - name: swelling_bruising_or_deformity_leg_or_foot_observed
+          definition: Visible bruising, abnormal discoloration, swelling, or structural deformity on a
+            leg or foot that is distinct from a skin break, burn, or an amputation in the region.
+        - name: swelling_bruising_or_deformity_on_both_legs_or_feet_observed
+          definition: Visible bruising, abnormal discoloration, swelling, or structural deformity present
+            on both legs or feet of the subject that is distinct from a skin break, burn, or an amputation
+            in the region. If you select this label, also select `swelling_bruising_or_deformity_leg_or_foot_observed`.
+        - name: skin_break_leg_or_foot_observed
+          definition: A visible break in the skin of a leg or foot that is open to the environment, presenting
+            as a gap or cut, exposed underlying or moist tissue, or a penetrating wound at the injury
+            site.
+        - name: blood_visible_at_leg_or_foot_observed
+          definition: Visible blood located directly at the injury site on a leg or foot, including bleeding
+            from the wound itself or fresh blood pooling at the wound location.
+        - name: blood_visible_on_both_legs_or_feet_observed
+          definition: Visible blood at injury sites present on both legs or feet of the subject, including
+            bleeding from the wound itself or fresh blood pooling at the wound location. If you select
+            this label, also select `blood_visible_at_leg_or_foot_observed`.
+        - name: burn_leg_or_foot_observed
+          definition: Visible signs of thermal or chemical injury on a leg or foot, such as abnormal skin
+            discoloration (reddened, whitened, darkened, or charred) and/or visible texture change (blistered,
+            shiny, dry, cracked, or charred).
+        - name: burn_on_both_legs_or_feet_observed
+          definition: Visible signs of thermal or chemical injury present on both legs or feet of the
+            subject, such as abnormal skin discoloration (reddened, whitened, darkened, or charred) and/or
+            visible texture change (blistered, shiny, dry, cracked, or charred). If you select this label,
+            also select `burn_leg_or_foot_observed`.
+        - name: bandage_leg_or_foot_observed
+          definition: A visible bandage, dressing, gauze, or cloth wrap applied specifically to a leg
+            or foot.
+        - name: bandage_on_both_legs_or_feet_observed
+          definition: One or more visible bandages, dressings, gauze, or cloth wraps are present on the
+            legs or feet on both sides of the subject. If you select this label, also select `bandage_leg_or_foot_observed`.
+        - name: tourniquet_leg_or_foot_observed
+          definition: A tourniquet (improvised constricting band/device used to stop the flow of blood
+            to limb by applying localized, constricting pressure) or clearly identifiable tourniquet-like
+            constricting device visibly secured around a leg or foot.
+        - name: tourniquet_on_both_legs_or_feet_observed
+          definition: Clearly identifiable tourniquets or tourniquet-like constricting devices on both
+            legs. Each tourniquet could be an improvised constricting band/device used to stop the flow
+            of blood to a limb by applying localized, constricting pressure. If you select this label,
+            also select `tourniquet_leg_or_foot_observed`.
+        - name: guarding_leg_or_foot_observed
+          definition: The subject visibly uses one or both hands to hold, cradle, support, or guard a
+            leg or foot, and it is clear that they are not just resting their arms or hands on their legs.
+        - name: guarding_on_both_legs_or_feet_observed
+          definition: The subject visibly guards both legs or feet, with each leg or foot being held,
+            supported, cradled, or otherwise guarded, and it is clear that they are not just resting their
+            arms or hands on their legs. If you select this label, also select `guarding_leg_or_foot_observed`.
+        - name: amputation_leg_or_foot_observed
+          definition: A portion of a leg or foot is visibly missing or severed, with blood at/around the
+            disruption region.
+        - name: amputation_on_both_legs_or_feet_observed
+          definition: Visible amputations or missing/severed leg or foot portions present on both legs
+            or feet of the subject, with blood at/around the disruption region. If you select this label,
+            also select `amputation_leg_or_foot_observed`.
+        - name: penetrating_injury_leg_or_foot_observed
+          definition: A foreign object is visibly entering, embedded in, or protruding from tissue of
+            a leg or foot, or a clearly identifiable puncture/penetration opening is visible. Do not select
+            for shallow cuts, abrasions, bruising, swelling, deformity, blood alone, or an object merely
+            contacting the skin.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: legs_and_feet_assessed_no_injury
+          definition: A clear, inspected view of both legs and feet confirming the absence of leg and
+            foot injury observables.
+        - name: legs_and_feet_not_assessable
+          definition: Legs or feet are occluded, off-frame, obscured by equipment, or otherwise inadequately
+            visible to assess for injury.
+  alertness_ocular:
+    name: ALERTNESS - EYES
+    subcategories:
+      observables:
+        selection_rule: select_one_or_none
+        cues:
+        - name: eyes_open_with_blinking_observed
+          definition: One or both eyes are visibly open, and at least one clear blink is observed during
+            the observation interval.
+        - name: eyes_open_no_blinking_observed
+          definition: One or both eyes remain visibly open for the full observation interval, and no blink
+            is observed at any point.
+        - name: eyes_closed_throughout_observed
+          definition: Both eyes remain visibly closed throughout the observation interval, with no clear
+            opening.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: eyes_view_inadequate
+          definition: The eyes cannot be reliably assessed due to an insufficient view, such as the face
+            being turned away, off-frame, or obscured by blur, glare, low resolution, or poor lighting.
+        - name: both_eyelids_injured_or_occluded
+          definition: The eye region is adequately visible, but the eyelids cannot be assessed due to
+            severe injury (e.g., laceration or swelling that prevents eyelid movement) or physical occlusion
+            (e.g., a bandage, dressing, sunglasses/goggles, or another foreign object covering the eyelids).
+  alertness_verbal:
+    name: ALERTNESS - VERBAL (FACIAL-PROXY)
+    subcategories:
+      observables:
+        selection_rule: select_one_or_none
+        cues:
+        - name: facial_engagement_with_environment_observed
+          definition: Across the observation interval, the subject shows visible facial or head responses
+            to the environment, such as visually tracking a person or object, turning the head toward
+            nearby activity, active facial movement, or mouth movement consistent with attempting to speak.
+        - name: facial_distress_or_pain_expression_observed
+          definition: The subject shows a visible facial expression of distress or pain, such as grimacing,
+            clenched teeth, tightly scrunched eyes, a strained expression or an expression that looks
+            like shouting, a contorted expression, or tears.
+        - name: facial_unresponsiveness_or_slackness_observed
+          definition: Across the observation interval, the subject's face remains slack or shows no visible
+            response to nearby activity, indicated by eyes closed or vacantly open without tracking, a
+            slack and motionless mouth, no purposeful facial movement, and no meaningful change in facial
+            expression.
+        - name: mouth_jaw_or_throat_injury_observed
+          definition: A visible structural injury affects the mouth, jaw, or throat region, such as a
+            large cut, crushing injury, penetrating foreign object, marked deformity, or extensive tissue
+            disruption.
+      assessment:
+        selection_rule: default_if_no_observables
+        cues:
+        - name: face_view_inadequate_for_verbal_proxy
+          definition: The face cannot be observed clearly enough to evaluate the facial cues used as a
+            visual proxy for verbal responsiveness, such as when the face is turned away, off-frame, occluded,
+            too distant, blurred, or poorly illuminated.
+  alertness_motor_posture:
+    name: ALERTNESS - BODY POSTURE
+    subcategories:
+      observables:
+        selection_rule: multi_select_or_none
+        cues:
+        - name: ambulatory_observed
+          definition: The subject is walking or actively moving from one location to another under their
+            own power.
+        - name: standing_unsupported_observed
+          definition: The subject is standing upright without leaning on any external surface or person,
+            and without any visible mechanical aid bearing weight.
+        - name: sitting_unsupported_observed
+          definition: The subject is sitting upright without leaning on a wall, person, or chair-back;
+            without using their own hands for support; and without obvious external structural support
+            for the torso.
+        - name: sitting_supported_observed
+          definition: The subject is sitting with visible external support to remain upright, such as
+            leaning against a wall, vehicle, or surface; leaning against a back-rest; being physically
+            supported by another person; or visibly using their own arms to support their upper body.
+        - name: lying_down_observed
+          definition: The subject is lying flat on their back, stomach (face-down), or on their side.
+        - name: subject_engagement_with_environment_observed
+          definition: The subject performs a visible intentional action oriented towards another person,
+            object, or event in the environment, such as pointing, reaching, or gesturing in a consistent
+            direction.
+      assessment:
+        selection_rule: default_if_no_observables
+        cues:
+        - name: posture_not_assessable
+          definition: The subject's body cannot be observed clearly enough to determine posture because
+            the body is off-frame, substantially occluded, too distant, blurred, or otherwise visually
+            inadequate.
+  alertness_motor_movement:
+    name: ALERTNESS - BODY MOVEMENT
+    subcategories:
+      observables:
+        selection_rule: select_one_or_none
+        cues:
+        - name: purposeful_movement_observed
+          definition: The subject's arm, leg, upper-body, or head movement appears intentional and goal-directed
+            such as standing on feet, reaching for something, adjusting body position, gesturing, or otherwise
+            moving in a way that suggests awareness and intent.
+        - name: nonpurposeful_or_twitching_movement_observed
+          definition: Movement is visible, but it is not clearly goal-directed, such as twitching, involuntary
+            spasms, repeated minor movements, or restless thrashing without a visible target.
+        - name: no_movement_observed
+          definition: Across the observation interval, no movement of any kind is observed from the subject,
+            including no limb shifting, head movement, or twitching. Do not select when an external constraint
+            visibly prevents movement. Do not select when the subject is standing.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: movement_view_inadequate
+          definition: The subject's body cannot be observed adequately enough over the observation interval
+            to determine movement because the subject is off-frame, substantially occluded, the observation
+            interval is too short, or the view is otherwise inadequate.
+        - name: external_immobilization_observed
+          definition: The subject's body or limbs are visibly prevented from moving by an external constraint,
+            such as straps, restraints, debris, another object, or a position that physically prevents
+            movement.
+  medic_presence:
+    name: MEDIC PRESENCE
+    subcategories:
+      observables:
+        selection_rule: select_one_or_none
+        cues:
+        - name: medic_actively_treating_observed
+          definition: Another person is visibly performing medical treatment on the subject, such as applying
+            direct pressure, performing chest compressions, administering an injection, applying or securing
+            a bandage, or otherwise actively delivering medical care.
+      assessment:
+        selection_rule: exactly_one_if_no_observables
+        cues:
+        - name: medic_assessed_absent
+          definition: The area around the subject is sufficiently visible to confirm that no other person
+            is actively delivering medical treatment.
+        - name: medic_not_assessable
+          definition: The area around the subject is occluded, off-frame, or otherwise inadequately visible
+            to determine whether treatment is occurring.
+  subject_type:
+    name: SUBJECT TYPE
+    subcategories:
+      observables:
+        selection_rule: exactly_one
+        cues:
+        - name: subject_is_casualty
+          definition: The subject is the casualty being assessed in the scene, rather than a medic/responder,
+            robot, or other object.
+        - name: subject_is_medic
+          definition: The subject being assessed is a medic, first responder, or simply one who appears
+            to provide medical care in the scene. Do not select merely because a medic is visible nearby
+            or is treating the subject; select only when the subject itself is the medic or responder.
+        - name: subject_is_robot
+          definition: The subject is a robotic system, such as a drone, ground robot, legged robot, or
+            wheeled robot, identifiable by its non-human body structure and mechanical shape.
+        - name: subject_is_other_object
+          definition: The subject is an object that is not a casualty, medic/responder, or robotic system,
+            such as fire hydrants, equipment, debris or rubble, sandbags, vehicles, or any other non-human
+            objects.
+  subject_check:
+    name: SUBJECT CHECK
+    subcategories:
+      observables:
+        selection_rule: exactly_one
+        cues:
+        - name: subject_is_human_or_human_like_manikin
+          definition: The subject is a person, including a human-like manikin.
+        - name: subject_is_not_human_or_manikin
+          definition: The subject is not a person, such as a robot, drone, vehicle, clothing, a bag, debris,
+            equipment, or another object.
+  context:
+    name: CONTEXT
+    subcategories:
+      observables:
+        selection_rule: exactly_one
+        cues:
+        - name: close_inspection_achieved
+          definition: The subject is shown at sufficient image scale, focus, and clarity for fine visual
+            details such as facial features, skin condition, and small injuries to be resolved.
+        - name: distant_inspection_achieved
+          definition: The subject is shown at sufficient image scale, focus, and clarity to recognize
+            the head and at least one arm or leg, but not clearly enough to resolve the detailed features
+            required for close inspection.
+        - name: media_quality_insufficient
+          definition: The media is degraded by motion blur, low resolution, severe over- or under-exposure,
+            compression artifacts, or similar image-quality problems to the extent that reliable visual
+            assessment of the subject is substantially impaired.

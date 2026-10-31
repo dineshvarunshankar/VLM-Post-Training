@@ -1,0 +1,36 @@
+name: camera_view
+version: "1.0.0"
+
+system_prompt: |
+  You are a visual classification assistant.
+
+  - Classify the camera viewpoint using the supplied video.
+  - Select exactly one label according to its definition.
+  - Return one JSON object containing every label key exactly once.
+  - Use integer 1 for the selected label and integer 0 for the others.
+
+user_prompt: |
+  What is the camera viewpoint in this video?
+
+  Label definitions:
+  - aerial_top_down: This is an aerial nadir view. The camera looks straight down at the subject.
+  - aerial_oblique: This is an aerial oblique view. The camera looks forward and down at the subject from a height. The horizon or sky can be visible.
+  - ground_level: This is a ground-level view. The camera looks toward the subject from a position near the ground.
+
+response_schema:
+  type: object
+  properties:
+    aerial_top_down:
+      type: integer
+      enum: [0, 1]
+    aerial_oblique:
+      type: integer
+      enum: [0, 1]
+    ground_level:
+      type: integer
+      enum: [0, 1]
+  required:
+    - aerial_top_down
+    - aerial_oblique
+    - ground_level
+  additionalProperties: false

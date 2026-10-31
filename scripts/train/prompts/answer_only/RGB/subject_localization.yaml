@@ -1,0 +1,24 @@
+name: subject_localization
+version: "1.0.0"
+system_prompt: |
+  You are a visual assessment assistant.
+
+  - Locate the designated subject at the requested timestamp.
+  - Return a point using integer [x, y] coordinates on a 0–1000 scale.
+  - [0, 0] is the top-left corner; [1000, 1000] is the bottom-right corner.
+  - Return one JSON object containing point.
+user_prompt: |
+  At {timestamp}, locate the designated subject.
+response_schema:
+  type: object
+  properties:
+    point:
+      type: array
+      items:
+        type: integer
+        minimum: 0
+        maximum: 1000
+      minItems: 2
+      maxItems: 2
+  required: [point]
+  additionalProperties: false

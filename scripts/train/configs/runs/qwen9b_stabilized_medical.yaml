@@ -1,0 +1,274 @@
+schema_version: 1
+run:
+  name: qwen9b_stabilized_medical
+  date: '2026-10-30'
+model: qwen3.5-9b
+model_settings:
+  vllm_tensor_parallel_size: 1
+  repository: Qwen/Qwen3.5-9B
+  revision: c202236235762e1c871ad0ccb60c8ee5ba337b9a
+  generation:
+    do_sample: true
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 1.5
+    repetition_penalty: 1.0
+  generation_source: https://huggingface.co/Qwen/Qwen3.5-9B#best-practices
+answer_format: answer_only
+recipe: sft
+paths:
+  media_root: /path/to/datasets
+  split_dir: /path/to/datasets/08-train_val_test/2026-10-30/answer_only
+  weights_root: /path/to/model-weights/weights
+  output_root: /path/to/model-weights/finetuned
+  catalog: ../catalogs/RGB/label_catalog.yaml
+  prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
+cloud:
+  source_container: vlm-zoo
+  source_prefix: weights
+  output_container: vlm-zoo
+  output_prefix: finetuned
+wandb:
+  entity: dkandiya-carnegie-mellon-university
+  project: Triage VLM
+  mode: online
+  log_model: 'false'
+  watch: 'false'
+execution:
+  training_gpus: 4
+  training_devices: null
+  vllm_server_url: http://localhost:8000
+  vllm_model_name: qwen3.5-9b
+dataset:
+  modality: RGB
+  sources:
+  - stabilized
+mixture:
+  strategy: all_medical_plus_auxiliary
+  shuffle: true
+  resample_each_epoch: true
+  medical_vqa:
+    enabled: true
+    sampling: all_valid
+    excluded_categories:
+    - subject_check
+    context_sources:
+    - native
+  camera_view:
+    enabled: false
+    sources:
+    - native
+    questions_per_video_per_epoch: 1
+  counting:
+    enabled: false
+    sources:
+    - native
+    questions_per_video_per_epoch: 1
+    timestamp_sampling: random_annotated
+  subject_localization:
+    enabled: false
+    sources:
+    - native
+    - stabilized
+    questions_per_video_per_epoch: 1
+  label_questions:
+    enabled: false
+    excluded_categories:
+    - subject_check
+    - context
+    sampling:
+      observables: 2
+      assessment: 2
+      single_subcategory: 1
+      prefer_positive_negative_pair: true
+      without_replacement: true
+      cap_to_available_labels: true
+    grounding:
+      spatial:
+        enabled: true
+      temporal:
+        enabled: true
+        temporal_labels_only: true
+sft:
+  recipe: sft_only
+  method: lora
+  attention: sdpa
+  max_length: 262144
+  effective_batch_size: 16
+  video:
+    fps: 10
+    qwen:
+      max_pixels: 251658240
+    gemma:
+      max_soft_tokens: 280
+  augmentation:
+    enabled: false
+    photometric:
+      probability: 0.3
+      brightness:
+      - 0.95
+      - 1.05
+      contrast:
+      - 0.95
+      - 1.05
+    horizontal_flip:
+      enabled: false
+  lora:
+    r: 32
+    lora_alpha: 32
+    lora_dropout: 0.05
+    bias: none
+    use_rslora: false
+  data_checks:
+    stabilized_coordinates_verified: false
+  evaluation:
+    max_new_tokens: 1024
+  training:
+    fsdp: true
+    fsdp_config:
+      version: 2
+      reshard_after_forward: true
+      activation_checkpointing: true
+      cpu_offload: false
+      state_dict_type: FULL_STATE_DICT
+    seed: 42
+    num_train_epochs: 3
+    learning_rate: 0.0001
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    warmup_steps: 0.05
+    weight_decay: 0.0
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_epsilon: 1.0e-08
+    max_grad_norm: 1.0
+    lr_scheduler_type: cosine
+    optim: adamw_torch
+    logging_steps: 1
+    eval_strategy: epoch
+    save_strategy: epoch
+    save_total_limit: 2
+    load_best_model_at_end: true
+    metric_for_best_model: macro_f1
+    greater_is_better: true
+    dataloader_num_workers: 4
+    dataloader_persistent_workers: true
+    dataloader_prefetch_factor: 1
+    dataloader_pin_memory: true
+    dataloader_multiprocessing_context: spawn
+    accelerator_config:
+      non_blocking: true
+rl:
+  policy:
+    thinking: false
+    disable_dropout: true
+    importance_sampling_level: sequence
+    epsilon: 0.0003
+    epsilon_high: 0.0004
+    beta: 0.001
+    sync_ref_model: false
+    num_generations: 8
+    num_iterations: 1
+    temperature: 1.0
+    top_p: 1.0
+    top_k: 0
+    repetition_penalty: 1.0
+    max_completion_length: 1024
+    reward_aggregation: sum_then_normalize
+    scale_rewards: group
+    equal_reward_groups: retain_with_kl
+  batch:
+    questions_per_update: 64
+    questions_per_rollout: 64
+    responses_per_device: 1
+  training:
+    num_train_epochs: 1
+    learning_rate: 1.0e-05
+    lr_scheduler_type: constant_with_warmup
+    warmup_ratio: 0.05
+    optim: adamw_torch_fused
+    weight_decay: 0.0
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_epsilon: 1.0e-08
+    max_grad_norm: 1.0
+    gradient_checkpointing: true
+    base_dtype: bfloat16
+    adapter_dtype: float32
+  execution:
+    backend: fsdp2
+    cpu_offload: false
+    vllm_mode: server
+    rollout_gpus: 4
+    rollout_tensor_parallel_size: null
+  evaluation:
+    before_training: true
+    interval_epochs: 0.25
+    save_on_evaluation: true
+    metric: medical_category_macro_f1
+    greater_is_better: true
+    starting_checkpoint_eligible: true
+  rewards:
+    medical_vqa: selected_label_f1
+    single_label: exact_match
+    invalid_answer: 0.0
+    correct_negative: 1.0
+    answer_and_spatial:
+      answer: 0.6
+      spatial: 0.4
+    answer_and_temporal:
+      answer: 0.6
+      temporal: 0.4
+    answer_and_both:
+      answer: 0.6
+      spatial: 0.2
+      temporal: 0.2
+    spatial:
+      mandatory_only: true
+      human_annotated_frames_only: true
+      timestamp_tolerance_seconds: 0.5
+      native_full_credit_pixels: 10.0
+      native_zero_credit_pixels: 20.0
+      stabilized_full_credit_pixels: 10.0
+      stabilized_zero_credit_pixels: 20.0
+      label_policy:
+        excluded_categories:
+        - alertness_motor_posture
+        - medic_presence
+        categories:
+          respiratory_distress:
+            mode: point
+            labels:
+            - tripod_position_observed
+            - abnormal_head_neck_posture_observed
+            - wide_open_mouth_observed
+            full_credit_pixels: 20.0
+            zero_credit_pixels: 40.0
+            placement_instructions:
+              tripod_position_observed: Place the required evidence points on the casualty's knees.
+              abnormal_head_neck_posture_observed: Place the evidence point on the head or neck showing
+                the abnormal posture.
+              wide_open_mouth_observed: Place the evidence point on the visibly open mouth.
+          subject_type:
+            mode: subject_box
+      matching: one_to_one
+      denominator: max_prediction_required_target_count
+    temporal:
+      mandatory_only: true
+      start_full_seconds: 0.5
+      start_zero_seconds: 1.0
+      end_full_seconds: 1.0
+      end_zero_seconds: 2.0
+      require_positive_overlap: true
+      boundary_combination: product
+      matching: one_to_one
+      denominator: max_prediction_target_count
+    subject_localization: point_inside_subject_box
+    counting: relative_absolute_error
+    camera_view: exact_match
+env_file: ../../../../.env
+checkpoint: null
+sft_run: null
+resume: null

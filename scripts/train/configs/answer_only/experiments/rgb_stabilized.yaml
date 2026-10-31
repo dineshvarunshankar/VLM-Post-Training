@@ -1,0 +1,12 @@
+extends: rgb_combined.yaml
+
+dataset:
+  sources:
+    native: false
+    stabilized: true
+
+mixture:
+  camera_view:
+    enabled: false
+  counting:
+    enabled: false
