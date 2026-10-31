@@ -29,7 +29,6 @@ def configure_tracking(args, recipe, output, *, repository=None):
     os.environ['WANDB_RUN_ID'] = hashlib.sha256(name.encode()).hexdigest()[:24]
     os.environ['WANDB_RESUME'] = 'allow' if args.resume else 'never'
     directory = Path(output) / 'tracking'
-    directory.mkdir(parents=True, exist_ok=True)
     os.environ['WANDB_DIR'] = str(directory)
     return {'report_to': 'wandb', 'run_name': name}
 
@@ -38,6 +37,10 @@ def add_tracking_metadata(trainer, output):
     """Add recipe and dataset fingerprints to the native Trainer W&B run."""
     if 'wandb' not in trainer.args.report_to:
         return
+    # Trainer initializes distributed workers before this hook. Creating the
+    # directory earlier can make a delayed rank reject the fresh run as nonempty.
+    if trainer.is_world_process_zero():
+        (Path(output) / 'tracking').mkdir(parents=True, exist_ok=True)
     from transformers import TrainerCallback
 
     class RunMetadataCallback(TrainerCallback):
