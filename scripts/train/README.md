@@ -282,6 +282,7 @@ uv run --group rl python scripts/train/patch_vllm.py
 ```
 
 The patches require the system `patch` command and vLLM 0.30.0.
+The Qwen bridge patch prevents duplicate size arguments when vLLM forwards the configured video settings to the Hugging Face processor.
 Apply them again after recreating the environment. Use `--group rl` for training commands to retain this dependency group.
 
 If an existing environment has the earlier Gemma patch, stop its serving processes before upgrading.

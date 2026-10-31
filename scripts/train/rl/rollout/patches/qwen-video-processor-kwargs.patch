@@ -1,0 +1,18 @@
+--- a/model_executor/models/qwen3_vl.py
++++ b/model_executor/models/qwen3_vl.py
+@@ -1383,6 +1383,15 @@
+                     if max_pixels is not None:
+                         video_size["longest_edge"] = max_pixels
+                     video_mm_kwargs["size"] = video_size
++                    # HF rejects size in both flat and nested kwargs. The
++                    # computed flat value already includes the video override.
++                    # Override the configured nested dict without mutating it.
++                    if isinstance(merged.get("videos_kwargs"), Mapping):
++                        video_mm_kwargs["videos_kwargs"] = {
++                            key: value
++                            for key, value in merged["videos_kwargs"].items()
++                            if key != "size"
++                        }
+                 sampled_fps = video_mm_kwargs.get("fps")
+                 if is_list_of(sampled_fps, float):
+                     video_mm_kwargs["fps"] = sampled_fps[item_idx]
