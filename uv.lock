@@ -920,6 +920,18 @@ wheels = [
 ]
 
 [[package]]
+name = "fla-core"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "einops" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/2d/3181d715d021c12db379ce0bc51ba78c5b6282ff6c3c79cc2f64d183d1b2/fla_core-0.6.0.tar.gz", hash = "sha256:cdd5b7ff6d5c0e5c08fde73f2624d76e0b506f8684af4e316bc7f2d8bfd9a623", size = 775665, upload-time = "2026-10-23T17:48:03.213Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/08/a1a16725117cddded90bb11afed4b31f23d97f7f554775e66af998818ef9/fla_core-0.6.0-py3-none-any.whl", hash = "sha256:b0708b70e0b119cd58a0a5146ea56cb175cef6ed969d8ac60267e3e077ce3ebd", size = 1085221, upload-time = "2026-10-23T17:48:00.23Z" },
+]
+
+[[package]]
 name = "flashinfer-python"
 version = "0.6.18.post1"
 source = { registry = "https://pypi.org/simple" }
@@ -4100,6 +4112,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "accelerate" },
     { name = "boto3" },
+    { name = "fla-core" },
     { name = "google-genai" },
     { name = "jsonschema" },
     { name = "litellm" },
@@ -4125,6 +4138,7 @@ rl = [
 requires-dist = [
     { name = "accelerate", specifier = ">=1.10,<2" },
     { name = "boto3", specifier = ">=1.43,<2" },
+    { name = "fla-core", specifier = "==0.6.0" },
     { name = "google-genai", specifier = ">=2.33.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "litellm", specifier = ">=1.106.4" },

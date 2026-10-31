@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv>=1.2.4",
     "pyyaml>=6.0.3",
     "wandb>=0.25,<1",
+    "fla-core==0.6.0",
 ]
 
 [tool.uv]

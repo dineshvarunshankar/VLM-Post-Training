@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 from scripts.train.storage.cloud_models import digest_file, local_file
+from scripts.train.shared.attention_compat import cpu_export_attention
 from scripts.train.shared.data import atomic_json, read_json
 
 
@@ -68,7 +69,7 @@ def export_merged(model, processor, run, selection):
     model.eval()
     inputs = processor.tokenizer("Return JSON.", return_tensors="pt")
     device = next(model.parameters()).device
-    with torch.inference_mode():
+    with torch.inference_mode(), cpu_export_attention(model):
         reference = (
             model(**{k: v.to(device) for k, v in inputs.items()})
             .logits[:, -1]
@@ -107,7 +108,7 @@ def export_merged(model, processor, run, selection):
                 f"Merged model reload reported incompatible weights: {info}"
             )
         reloaded.eval()
-        with torch.inference_mode():
+        with torch.inference_mode(), cpu_export_attention(reloaded):
             actual = reloaded(**inputs).logits[:, -1].float()
         # BF16 merge and CPU/GPU kernels can differ slightly; this is a smoke check,
         # not a replacement for the held-out multimodal evaluation.

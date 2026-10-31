@@ -284,6 +284,37 @@ uv run --group rl python scripts/train/patch_vllm.py
 The patches require the system `patch` command and vLLM 0.30.0.
 Apply them again after recreating the environment. Use `--group rl` for training commands to retain this dependency group.
 
+The locked environment includes `fla-core` for Qwen's gated-delta attention kernels.
+Kernel compilation needs a compatible CUDA toolkit and C++ compiler.
+
+Keep `uv` on the server's `PATH`.
+In a uv environment without pip, vLLM uses `uv pip list` for its environment report.
+Check both `/health` and `/server_info?config_format=json` before loading training models.
+A successful health check alone does not verify the environment-report endpoint.
+
+Use writable local storage for compiler caches.
+If the account has no home directory, set these paths before starting training or serving:
+
+```bash
+export TRIAGE_KERNEL_CACHE=/path/to/writable/node-local/cache
+export XDG_CACHE_HOME="$TRIAGE_KERNEL_CACHE/xdg"
+export XDG_CONFIG_HOME="$TRIAGE_KERNEL_CACHE/config"
+export TRITON_CACHE_DIR="$TRIAGE_KERNEL_CACHE/triton"
+export TILELANG_CACHE_DIR="$TRIAGE_KERNEL_CACHE/tilelang"
+export FLASHINFER_WORKSPACE_BASE="$TRIAGE_KERNEL_CACHE/flashinfer"
+mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$TRITON_CACHE_DIR" \
+  "$TILELANG_CACHE_DIR" "$FLASHINFER_WORKSPACE_BASE"
+```
+
+On PSC `cntc-gb001`, the GPU 2/3 communication check stalled with the default NCCL transport.
+The same check passed with `NCCL_P2P_DISABLE=1`.
+For that node setup, export this setting before starting training and serving.
+Do not apply this workaround to other nodes without checking their communication paths.
+
+For long native videos, SFT supports `sft.training.activation_offloading: true`.
+This setting does not enable RL activation offloading.
+Check memory with representative clips before a full run; the optimizer-step smoke does not establish worst-case memory use.
+
 Allocate separate GPUs for training and the server. Their device sets must not overlap.
 For four server GPUs, the model profiles specify these starting allocations:
 
@@ -305,6 +336,8 @@ export ROLLOUT_GPU_MEMORY_UTILIZATION=YOUR_CHECKED_FRACTION
 Replace `REVISION` with the downloaded revision. Set `ROLLOUT_MAX_SEQS` from the memory and throughput device check.
 Server concurrency is separate from the training batch size.
 For RL, set `ROLLOUT_MAX_SEQS` to at least `rl.policy.num_generations`.
+A reduced smoke batch does not verify full-batch capacity.
+Check the configured response count and representative video sizes separately.
 Reserve GPU memory for weight-transfer buffers and NCCL communicators when choosing the memory fraction.
 
 Install `ffprobe` and add its directory to `PATH` before RL.
