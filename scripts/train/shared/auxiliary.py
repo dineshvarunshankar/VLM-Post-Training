@@ -7,7 +7,7 @@ from pathlib import Path
 
 from scripts.train.shared.paths import ANSWER_ONLY_PROMPT_DIR
 from scripts.train.shared.data import category_prompt_values, read_json, read_yaml, sha256
-from scripts.train.shared.grounding import counting_targets, spatial_target, temporal_target, subject_targets, evidence_requirements
+from scripts.train.shared.grounding import counting_targets, spatial_target, temporal_target, subject_targets, evidence_requirements, label_grounding_targets
 from scripts.train.shared.mixture import EpochMixtureSampler
 from scripts.train.shared.spatial_policy import spatial_rule
 
@@ -164,7 +164,7 @@ def build_mixture(
                     issue(
                         base,
                         "counting",
-                        "No frames with complete person visibility annotations",
+                        "No frames with human visibility annotations for every counted person",
                     )
             except (ValueError, KeyError, TypeError, OSError) as error:
                 issue(base, "counting", error)
@@ -174,6 +174,7 @@ def build_mixture(
                 candidates = subject_targets(
                     annotation("counting.json"), annotation("points.json"),
                     annotation("boxes.json"), meta,
+                    on_issue=lambda error: issue(base, "subject_localization", error),
                 )
                 indices = [
                     add(base, "subject_localization", {"point": c["point"]},
@@ -238,37 +239,19 @@ def build_mixture(
                                 labels["grounding"]["temporal"]["enabled"]
                                 and cue["temporal"]
                             )
+                            components, frames = label_grounding_targets(
+                                cue, meta, spatial=spatial, temporal=temporal,
+                                on_issue=lambda component, error: issue(medical, component, error, name),
+                            )
+                            spatial, temporal = 'evidence' in components, 'time_spans' in components
                             task = (
-                                "label_selection_spatiotemporal"
-                                if spatial and temporal
-                                else "label_selection_grounding"
-                                if spatial
-                                else "label_selection_temporal"
-                                if temporal
-                                else "label_selection"
+                                'label_selection_spatiotemporal' if spatial and temporal
+                                else 'label_selection_grounding' if spatial
+                                else 'label_selection_temporal' if temporal
+                                else 'label_selection'
                             )
-                            target = (
-                                {name: answer[name]}
-                                if not (spatial or temporal)
-                                else {"answer": {name: answer[name]}}
-                            )
-                            frames = []
-                            if spatial:
-                                evidence, selected_frames = (
-                                    spatial_target(cue, meta)
-                                    if answer[name]
-                                    else ([], [])
-                                )
-                                target["evidence"] = evidence
-                                frames.extend(selected_frames)
-                            if temporal:
-                                spans, selected_frames = (
-                                    temporal_target(cue, meta)
-                                    if answer[name]
-                                    else ([], [])
-                                )
-                                target["time_spans"] = spans
-                                frames.extend(selected_frames)
+                            target = ({'answer': {name: answer[name]}, **components}
+                                      if components else {name: answer[name]})
                             requirements = ""
                             if spatial:
                                 placement = ("Place the point on the designated subject."

@@ -7,11 +7,12 @@ from pathlib import Path
 import re
 import threading
 import time
+import tempfile
 from urllib.parse import urlsplit
 
 import requests
 from scripts.train.shared.data import atomic_json
-from scripts.train.storage.cloud_models import SwiftSource, local_file, safe_relative
+from scripts.train.storage.cloud_models import SwiftSource, local_file, safe_relative, digest_file
 
 MANIFEST = 'dataset-transfer.json'
 ROOTS = {'06-native_media_dataset', '07-stabilized_media_dataset', '08-train_val_test'}
@@ -29,7 +30,7 @@ def location(value):
 
 
 def validate_manifest(value):
-    if value.get('schema_version') != 1 or not isinstance(value.get('files'), dict) or not value['files']:
+    if value.get('schema_version') not in (1, 2) or not isinstance(value.get('files'), dict) or not value['files']:
         raise ValueError('Invalid dataset transfer manifest')
     for name, record in value['files'].items():
         safe_relative(name)
@@ -39,6 +40,10 @@ def validate_manifest(value):
             raise ValueError(f'Invalid file size: {name}')
         if not isinstance(record.get('sha256'), str) or not re.fullmatch('[0-9a-f]{64}', record['sha256']):
             raise ValueError(f'Invalid checksum: {name}')
+        if 'object' in record:
+            safe_relative(record['object'])
+            if record['object'] != 'objects/' + record['sha256']:
+                raise ValueError(f'Invalid content object: {name}')
     names = set(value['files'])
     for name in names:
         if any(str(p) in names for p in Path(name).parents):
@@ -64,7 +69,7 @@ def parallel(items, operation, workers, label):
                 now = time.monotonic()
                 if number == total or now - last >= 5:
                     print(f'{label}: {number}/{total} files; {completed_bytes / 1024**3:.2f} GiB; '
-                          f'{completed_bytes / 1024**2 / max(now-started, .001):.2f} MiB/s', flush=True)
+                          f'checked in {now-started:.1f}s', flush=True)
                     last = now
         except BaseException:
             for future in futures:
@@ -91,11 +96,11 @@ def object_matches(response, record):
             and response.headers.get('X-Object-Meta-Source-Sha256') == record['sha256'])
 
 
-def put(client, url, path, record, md5):
+def put(client, url, path, record, md5, *, rewrite=False):
     head = client.session.head(url, timeout=(30, 60), allow_redirects=False)
-    if object_matches(head, record):
+    if object_matches(head, record) and not rewrite:
         return
-    if head.status_code != 404:
+    if head.status_code != 404 and not (rewrite and object_matches(head, record)):
         head.raise_for_status()
         raise ValueError('Cloud object conflicts with this snapshot; choose a new prefix')
     for attempt in range(3):
@@ -103,7 +108,8 @@ def put(client, url, path, record, md5):
             with path.open('rb') as stream:
                 response = client.session.put(url, data=stream, headers={
                     'ETag': md5, 'X-Object-Meta-Source-Sha256': record['sha256'],
-                    'Content-Type': 'application/octet-stream', 'If-None-Match': '*',
+                    'Content-Type': 'application/octet-stream',
+                    **({} if rewrite else {'If-None-Match': '*'}),
                 }, timeout=(30, 120), allow_redirects=False)
             if response.status_code in (409, 412):
                 check = client.session.head(url, timeout=(30, 60), allow_redirects=False)
@@ -120,7 +126,7 @@ def put(client, url, path, record, md5):
             time.sleep(2 ** attempt)
 
 
-def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False):
+def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False, rewrite=False):
     container, prefix = location(destination)
     source = source or SwiftSource()
     if not 1 <= workers <= 64:
@@ -131,6 +137,14 @@ def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False)
     if inspect:
         print(f'Cloud preview: {len(plan.files)} files to {destination}', flush=True)
         return
+    url = source.object_url(container, prefix+'/'+MANIFEST)
+    previous = source.session.get(url, timeout=(30, 60), allow_redirects=False)
+    if previous.status_code not in (200, 404):
+        raise ValueError(f'Manifest lookup failed (HTTP {previous.status_code})')
+    old = validate_manifest(previous.json()) if previous.status_code == 200 else {'files': {}}
+    previous_etag = previous.headers.get('ETag')
+    if previous.status_code == 200 and not previous_etag:
+        previous_etag = hashlib.md5(previous.content).hexdigest()
     get_client = clients(source)
 
     def send(name):
@@ -144,7 +158,14 @@ def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False)
                 md5.update(block)
         record = {'bytes': before.st_size, 'sha256': sha.hexdigest()}
         client = get_client()
-        put(client, client.object_url(container, prefix+'/files/'+name), path, record, md5.hexdigest())
+        existing = old['files'].get(name)
+        if existing and all(existing.get(k) == record[k] for k in ('bytes', 'sha256')):
+            record = dict(existing)
+        elif previous.status_code == 200:
+            record['object'] = 'objects/' + record['sha256']
+        object_name = record.get('object', 'files/' + name)
+        put(client, client.object_url(container, prefix+'/'+object_name), path, record,
+            md5.hexdigest(), rewrite=rewrite)
         after = path.stat()
         if (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
             raise ValueError(f'Source changed during upload: {name}')
@@ -152,27 +173,20 @@ def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False)
 
     records = parallel(plan.files, send, workers, 'Uploaded')
     plan.verify_unchanged()
-    manifest = validate_manifest({'schema_version': 1, 'files': records})
+    manifest = validate_manifest({'schema_version': 2, 'files': records})
     body = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
-    url = source.object_url(container, prefix+'/'+MANIFEST)
-    response = source.session.get(url, timeout=(30, 60), allow_redirects=False)
-    if response.status_code == 200:
-        if response.json() != manifest:
-            raise ValueError('Published snapshot differs; choose a new prefix')
-    elif response.status_code == 404:
+    if manifest != old or previous.status_code == 404:
         response = source.session.put(url, data=body, headers={
             'Content-Type': 'application/json', 'ETag': hashlib.md5(body).hexdigest(),
-            'If-None-Match': '*',
+            **({'If-Match': previous_etag} if previous.status_code == 200 else {'If-None-Match': '*'}),
         }, timeout=(30, 60), allow_redirects=False)
         if response.status_code not in (200, 201, 202, 204):
-            raise ValueError(f'Manifest publication failed (HTTP {response.status_code})')
-    else:
-        raise ValueError(f'Manifest lookup failed (HTTP {response.status_code})')
-    print(f'Snapshot published: {destination}', flush=True)
+            raise ValueError(f'Manifest publication failed (HTTP {response.status_code}); rerun to reconcile')
+    print(f'Dataset published: {destination}', flush=True)
     return manifest
 
 
-def download_dataset(origin, destination, *, workers=16, source=None, inspect=False):
+def download_dataset(origin, destination, *, workers=16, source=None, inspect=False, rewrite=False):
     container, prefix = location(origin)
     source = source or SwiftSource()
     if not 1 <= workers <= 64:
@@ -188,14 +202,23 @@ def download_dataset(origin, destination, *, workers=16, source=None, inspect=Fa
     if inspect:
         print(f'Cloud preview: {len(manifest["files"])} files to {root}', flush=True)
         return manifest
-    receipt = root / MANIFEST
-    if receipt.exists() and json.loads(receipt.read_text()) != manifest:
-        raise ValueError('Destination contains a different snapshot; choose a new directory')
     get_client = clients(source)
 
     def fetch(name):
         record = manifest['files'][name]
-        get_client().download(container, {**record, 'key': prefix+'/files/'+name}, local_file(root, name))
+        path = local_file(root, name)
+        item = {**record, 'key': prefix+'/'+record.get('object', 'files/'+name)}
+        if not rewrite and path.exists() and path.stat().st_size == record['bytes'] and digest_file(path) == record['sha256']:
+            return record
+        if not path.exists() and not rewrite:
+            get_client().download(container, item, path)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Keep the old file until the replacement passes size and SHA-256 checks.
+            with tempfile.TemporaryDirectory(prefix='.dataset-transfer-', dir=path.parent) as staging:
+                replacement = Path(staging) / 'replacement'
+                get_client().download(container, item, replacement)
+                replacement.replace(path)
         return record
 
     parallel(manifest['files'], fetch, workers, 'Verified')

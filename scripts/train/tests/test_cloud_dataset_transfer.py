@@ -37,6 +37,13 @@ class CloudDatasetTransferTests(unittest.TestCase):
                 if self.headers.get('ETag', md5) != md5:
                     self.send_error(422)
                     return
+                existing = owner.objects.get(self.path)
+                if self.headers.get('If-None-Match') == '*' and existing:
+                    self.send_error(412)
+                    return
+                if self.headers.get('If-Match') and (not existing or hashlib.md5(existing[0]).hexdigest() != self.headers['If-Match']):
+                    self.send_error(412)
+                    return
                 owner.objects[self.path] = (data, dict(self.headers))
                 self.send_response(201)
                 self.send_header('Content-Length', '0')
@@ -76,8 +83,8 @@ class CloudDatasetTransferTests(unittest.TestCase):
         from scripts.train.storage import dataset_transfer
         return dataset_transfer
 
-    def upload(self):
-        return self.module().upload_dataset(self.plan, 'swift://bucket/snapshot', workers=2, source=self.source)
+    def upload(self, **kwargs):
+        return self.module().upload_dataset(self.plan, 'swift://bucket/snapshot', workers=2, source=self.source, **kwargs)
 
     def test_roundtrip_preserves_layout_and_resumes_partial(self):
         self.upload()
@@ -122,15 +129,69 @@ class CloudDatasetTransferTests(unittest.TestCase):
             self.upload()
         self.assertEqual(self.objects, {})
 
-    def test_conflicting_snapshot_is_not_overwritten(self):
+    def test_update_replaces_changed_file_and_preserves_unrelated(self):
+        self.upload()
+        self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source)
+        unrelated = self.dest / 'keep.txt'
+        unrelated.write_text('keep')
+        p = self.root / self.name
+        p.write_bytes(b'newer-payload')
+        self.plan.stamps[p] = transfer.stamp(p)
+        self.upload()
+        self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source)
+        self.assertEqual((self.dest / self.name).read_bytes(), b'newer-payload')
+        self.assertEqual(unrelated.read_text(), 'keep')
+
+    def test_rewrite_download_replaces_even_matching_file(self):
+        self.upload()
+        self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source)
+        path = self.dest / self.name
+        inode = path.stat().st_ino
+        self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source, rewrite=True)
+        self.assertNotEqual(path.stat().st_ino, inode)
+        self.assertEqual(path.read_bytes(), b'video-payload')
+
+    def test_failed_rewrite_keeps_existing_file_and_receipt(self):
+        self.upload()
+        self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source)
+        receipt = (self.dest / 'dataset-transfer.json').read_bytes()
+        key = '/bucket/snapshot/files/' + self.name
+        _, headers = self.objects[key]
+        self.objects[key] = (b'wrong-payload', headers)
+        with self.assertRaises(ValueError):
+            self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source, rewrite=True)
+        self.assertEqual((self.dest / self.name).read_bytes(), b'video-payload')
+        self.assertEqual((self.dest / 'dataset-transfer.json').read_bytes(), receipt)
+
+    def test_update_skips_matching_upload_but_rewrite_uploads(self):
+        self.upload()
+        self.fail_put = True
+        self.upload()
+        with self.assertRaises(ValueError):
+            self.upload(rewrite=True)
+
+    def test_failed_update_preserves_published_manifest_and_objects(self):
         self.upload()
         before = dict(self.objects)
         p = self.root / self.name
         p.write_bytes(b'newer-payload')
         self.plan.stamps[p] = transfer.stamp(p)
+        self.fail_put = True
         with self.assertRaises(ValueError):
             self.upload()
-        self.assertEqual(before, self.objects)
+        self.assertEqual(self.objects, before)
+
+    def test_old_manifest_objects_remain_readable_after_update(self):
+        self.upload()
+        legacy_key = '/bucket/snapshot/files/' + self.name
+        original = self.objects[legacy_key]
+        p = self.root / self.name
+        p.write_bytes(b'newer-payload')
+        self.plan.stamps[p] = transfer.stamp(p)
+        manifest = self.upload()
+        self.assertEqual(manifest['schema_version'], 2)
+        self.assertEqual(self.objects[legacy_key], original)
+        self.assertEqual(self.objects['/bucket/snapshot/' + manifest['files'][self.name]['object']][0], b'newer-payload')
 
     def test_symlink_destination_rejected(self):
         self.upload()
@@ -141,6 +202,22 @@ class CloudDatasetTransferTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source)
         self.assertEqual(list(other.iterdir()), [])
+
+    def test_medical_scan_ignores_other_gt_writes_but_guards_medical_gt(self):
+        gt = self.root / 'GT'
+        gt.mkdir()
+        medical = gt / 'medical_vqa.json'
+        medical.write_text('{}')
+        (gt / 'general_scene_description.json').write_text('{}')
+        files, stamps = transfer.scan_directory(self.root, medical_gt_only=True)
+        self.assertIn(medical, files)
+        self.assertNotIn(gt / 'general_scene_description.json', files)
+        plan = transfer.TransferPlan(self.root, [], stamps, {}, 0)
+        (gt / 'general_scene_description.lock').touch()
+        plan.verify_unchanged()
+        medical.write_text('{"changed": true}')
+        with self.assertRaises(ValueError):
+            plan.verify_unchanged()
 
     def test_cli_download_and_preview(self):
         import os

@@ -55,6 +55,7 @@ def valid_point(point, width, height):
 
 
 def counting_targets(counting, points, meta):
+    """Count only frames with human records for every relevant person's visibility."""
     fps, _, width, height = video_geometry(meta)
     people = counting.get("people", [])
     if len({p["id"] for p in people}) != len(people):
@@ -86,6 +87,9 @@ def counting_targets(counting, points, meta):
         count, complete = 0, True
         for identifier in expected:
             item = states[identifier]
+            if item.get("by") != "human":
+                complete = False
+                break
             if item.get("occluded") is True:
                 continue
             point = item.get("point")
@@ -184,9 +188,59 @@ def spatial_target(cue, meta):
     return result, sorted({p['frame_index'] for p in points})
 
 
+def require_matching_geometry(meta, geometry):
+    """Accept millisecond-FPS serialization precision, not different media."""
+    fps, count, width, height = video_geometry(meta)
+    if (geometry is None or any(geometry.get(k) != v for k, v in
+            dict(width=width, height=height, n_frames=count).items())
+            or not math.isclose(geometry.get('fps', 0), fps, rel_tol=0, abs_tol=0.0005)):
+        raise ValueError('Decoded geometry differs from annotation metadata')
+
+
+def annotation_duration(meta):
+    """Recover missing duration from the writer-validated frame geometry."""
+    fps, count, _, _ = video_geometry(meta)
+    duration = meta.get('duration_s')
+    if duration is None:
+        return count / fps
+    if type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0:
+        raise ValueError('Invalid annotated video duration')
+    return duration
+
+
+def label_grounding_targets(cue, meta, *, spatial, temporal, on_issue=None):
+    """Keep usable components; never turn missing positive evidence into absence."""
+    target, frames = {}, []
+    for enabled, key, task, build in (
+        (spatial, 'evidence', 'spatial', spatial_target),
+        (temporal, 'time_spans', 'temporal', temporal_target),
+    ):
+        if not enabled:
+            continue
+        try:
+            values, selected = build(cue, meta) if cue['answer'] else ([], [])
+            target[key] = values
+            frames.extend(selected)
+        except (ValueError, KeyError, TypeError) as error:
+            if on_issue is not None:
+                on_issue(task, error)
+    return target, sorted(set(frames))
+
+
+def temporal_duration_limit(meta):
+    """Shared bound for target preparation and rewards, including serialization error."""
+    fps, count, _, _ = video_geometry(meta)
+    duration = annotation_duration(meta)
+    # FPS is serialized to three decimals. Propagate that rounding uncertainty
+    # only when duration has to be reconstructed; never alter annotated spans.
+    if meta.get('duration_s') is None and fps > 0.0005:
+        return count / (fps - 0.0005) + 0.001
+    return duration + 0.001
+
+
 def temporal_target(cue, meta):
     fps, count, _, _ = video_geometry(meta)
-    duration = meta["duration_s"]
+    end_limit = temporal_duration_limit(meta)
     spans = cue.get("time_spans", [])
     if not spans:
         raise ValueError("Positive temporal label has no annotated time spans")
@@ -198,7 +252,7 @@ def temporal_target(cue, meta):
                 type(v) not in (int, float) or not math.isfinite(v)
                 for v in (start, end)
             )
-            or not 0 <= start < end <= duration
+            or not (0 <= start < end and end <= end_limit)
         ):
             raise ValueError(
                 "Annotated time span is outside the video or has invalid bounds"
@@ -226,7 +280,7 @@ def normalized_subject_box(box):
     return bounds
 
 
-def subject_targets(counting, tracks, boxes, meta):
+def subject_targets(counting, tracks, boxes, meta, *, on_issue=None):
     """Use visible human subject seeds and their same-frame subject boxes."""
     fps, _, width, height = video_geometry(meta)
     if not meta['frame_convention'].get('coordinates', '').startswith('absolute pixels'):
@@ -253,12 +307,17 @@ def subject_targets(counting, tracks, boxes, meta):
         xy, box = parts[0]['point'], by_frame.get(row['frame'])
         if box is None:
             continue
-        if not valid_point(xy, width, height):
-            raise ValueError('Human subject point is outside the video frame')
-        bounds = normalized_subject_box(box)
-        normalized = [1000*xy[0]/width,1000*xy[1]/height]
-        rounded = [int(math.floor(v+.5)) for v in normalized]
-        if not all(bounds[axis] <= p[axis] <= bounds[axis+2] for p in (normalized,rounded) for axis in (0,1)):
-            raise ValueError('Human subject point or its rounded target is outside the subject box')
+        try:
+            if not valid_point(xy, width, height):
+                raise ValueError('Human subject point is outside the video frame')
+            bounds = normalized_subject_box(box)
+            normalized = [1000*xy[0]/width,1000*xy[1]/height]
+            rounded = [int(math.floor(v+.5)) for v in normalized]
+            if not all(bounds[axis] <= p[axis] <= bounds[axis+2] for p in (normalized,rounded) for axis in (0,1)):
+                raise ValueError('Human subject point or its rounded target is outside the subject box')
+        except (ValueError, KeyError, TypeError) as error:
+            if on_issue is not None:
+                on_issue(f"Frame {row['frame']}: {error}")
+            continue
         result.append(dict(frame=frame,timestamp=timestamp(frame/fps),point=rounded,box=bounds))
     return sorted(result,key=lambda row:row['frame'])

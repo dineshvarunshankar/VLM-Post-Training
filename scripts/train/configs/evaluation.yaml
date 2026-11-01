@@ -1,0 +1,44 @@
+auxiliary_scoring:
+  answer_and_spatial:
+    answer: 0.6
+    spatial: 0.4
+  answer_and_temporal:
+    answer: 0.6
+    temporal: 0.4
+  answer_and_both:
+    answer: 0.6
+    spatial: 0.2
+    temporal: 0.2
+  spatial:
+    timestamp_tolerance_seconds: 0.5
+    native_full_credit_pixels: 10.0
+    native_zero_credit_pixels: 20.0
+    stabilized_full_credit_pixels: 10.0
+    stabilized_zero_credit_pixels: 20.0
+    label_policy:
+      excluded_categories:
+      - alertness_motor_posture
+      - medic_presence
+      categories:
+        respiratory_distress:
+          mode: point
+          labels:
+          - tripod_position_observed
+          - abnormal_head_neck_posture_observed
+          - wide_open_mouth_observed
+          full_credit_pixels: 20.0
+          zero_credit_pixels: 40.0
+          placement_instructions:
+            tripod_position_observed: Place the required evidence points on the casualty's
+              knees.
+            abnormal_head_neck_posture_observed: Place the evidence point on the head
+              or neck showing the abnormal posture.
+            wide_open_mouth_observed: Place the evidence point on the visibly open
+              mouth.
+        subject_type:
+          mode: subject_box
+  temporal:
+    start_full_seconds: 0.5
+    start_zero_seconds: 1.0
+    end_full_seconds: 1.0
+    end_zero_seconds: 2.0

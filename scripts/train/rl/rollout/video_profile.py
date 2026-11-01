@@ -44,8 +44,8 @@ def main():
     from scripts.train.shared.run_config import load_run, compile_run
     from scripts.train.shared.modeling import build_processor
 
-    config = load_run(args.run)
-    experiment = compile_run(config)['experiment']
+    plan = compile_run(load_run(args.run))
+    config, experiment = plan['run'], plan['experiment']
     profile = deepcopy(config['model_settings'])
     profile['local_path'] = str(Path(config['paths']['weights_root']) / profile['repository'] / profile['revision'])
     checkpoint_config, processor, _ = build_processor(profile, experiment)

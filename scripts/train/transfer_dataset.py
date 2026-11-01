@@ -55,15 +55,20 @@ class TransferPlan:
             list(pool.map(check, self.stamps.items()))
 
 
-def scan_directory(directory):
+def scan_directory(directory, *, medical_gt_only=False):
     files, stamps = [], {}
 
     def visit(path):
         if path.is_symlink():
             raise ValueError(f'Symlinks are not supported in transfer inputs: {path}')
-        stamps[path] = stamp(path)
+        selected_gt = medical_gt_only and path == directory / 'GT'
+        # Other GT generators may add files here; guard selected files themselves.
+        if not selected_gt:
+            stamps[path] = stamp(path)
         with os.scandir(path) as entries:
             for entry in entries:
+                if selected_gt and entry.name != 'medical_vqa.json':
+                    continue
                 child = Path(entry.path)
                 if entry.is_symlink():
                     raise ValueError(f'Symlinks are not supported in transfer inputs: {child}')
@@ -113,7 +118,7 @@ def prepare_transfer(root, split):
                 raise ValueError(f'Missing or unsafe prepared file: {path}')
         if digest(directory / 'provenance.json') != entry['provenance_sha256']:
             raise ValueError(f'Prepared provenance changed: {directory}')
-        return scan_directory(directory)
+        return scan_directory(directory, medical_gt_only=True)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         for clip_files, clip_stamps in pool.map(check_clip, directories):
@@ -293,9 +298,12 @@ def main(argv=None):
     parser.add_argument('--destination', required=True, help='SSH path, local directory, or swift://container/snapshot-prefix')
     parser.add_argument('--workers', type=int, default=16, help='Concurrent cloud transfers (default: 16)')
     parser.add_argument('--inspect', action='store_true', help='Compare files and sizes with destination without copying')
+    parser.add_argument('--rewrite', action='store_true', help='Transfer all selected cloud dataset files again, including unchanged files')
     args = parser.parse_args(argv)
     try:
         cloud_upload = args.destination.startswith('swift://')
+        if args.rewrite and not (args.cloud_source or (cloud_upload and args.media_root)):
+            parser.error('--rewrite requires a cloud dataset upload or download')
         if args.cloud_source or cloud_upload:
             from scripts.train.storage.dataset_transfer import download_dataset, upload_dataset, location
             if not 1 <= args.workers <= 64:
@@ -303,7 +311,7 @@ def main(argv=None):
         if args.cloud_source:
             if args.split_dir is not None or cloud_upload:
                 parser.error('--cloud-source requires a local destination and no --split-dir')
-            download_dataset(args.cloud_source, args.destination, workers=args.workers, inspect=args.inspect)
+            download_dataset(args.cloud_source, args.destination, workers=args.workers, inspect=args.inspect, rewrite=args.rewrite)
             return 0
         if args.weights_root is not None:
             if cloud_upload:
@@ -330,7 +338,7 @@ def main(argv=None):
             print(f'{variant}: {count}' if plan.checksums is not None else f'{variant}: {count} prepared clips', flush=True)
         print(f'{len(plan.files):,} files; {plan.total_bytes / 1024**3:.2f} GiB source size', flush=True)
         if cloud_upload:
-            upload_dataset(plan, args.destination, workers=args.workers, inspect=args.inspect)
+            upload_dataset(plan, args.destination, workers=args.workers, inspect=args.inspect, rewrite=args.rewrite)
             return 0
         print('Preview: no files copied.' if args.inspect else 'Copying; existing destination files are not deleted.', flush=True)
         result = transfer(plan, args.destination, args.inspect)

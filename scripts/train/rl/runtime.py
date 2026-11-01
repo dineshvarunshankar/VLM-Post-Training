@@ -47,11 +47,15 @@ def training_arguments(recipe, experiment, questions, output, server_url):
                    if experiment['training'].get('data_seed') is not None
                    else experiment['training']['seed']),
         dataloader_num_workers=experiment['training'].get('dataloader_num_workers', 4),
-        dataloader_pin_memory=True, dataloader_drop_last=False,
+        dataloader_pin_memory=experiment['training'].get('dataloader_pin_memory', True),
+        dataloader_drop_last=False,
     )
     if args['dataloader_num_workers'] > 0:
-        args.update(dataloader_persistent_workers=True, dataloader_prefetch_factor=1,
-                    dataloader_multiprocessing_context='spawn')
+        args.update(
+            dataloader_persistent_workers=experiment['training'].get('dataloader_persistent_workers', True),
+            dataloader_prefetch_factor=experiment['training'].get('dataloader_prefetch_factor', 1),
+            dataloader_multiprocessing_context=experiment['training'].get('dataloader_multiprocessing_context', 'spawn'),
+        )
     return args
 
 

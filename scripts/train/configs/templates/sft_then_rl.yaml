@@ -1,51 +1,25 @@
-schema_version: 1
+schema_version: 2
 run:
-  name: gemma12b_combined_auxiliary
-  date: '2026-10-30'
-model: gemma4-12b-it
-model_settings:
-  vllm_tensor_parallel_size: 1
-  repository: google/gemma-4-12B-it
-  revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7
-  generation:
-    do_sample: true
-    temperature: 1.0
-    top_p: 0.95
-    top_k: 64
-    min_p: 0.0
-    presence_penalty: 0.0
-    repetition_penalty: 1.0
-  generation_source: https://ai.google.dev/gemma/docs/core/model_card_4#sampling-parameters
+  name: <run-name>
+  date: <YYYY-MM-DD>
+model: <model-id>
 answer_format: answer_only
-recipe: sft
+recipe: sft_then_rl
 paths:
-  media_root: /path/to/datasets
-  split_dir: /path/to/datasets/08-train_val_test/2026-10-30/answer_only
-  weights_root: /path/to/model-weights/weights
-  output_root: /path/to/model-weights/finetuned
+  media_root: <absolute-dataset-root>
+  split_dir: <absolute-split-directory>
+  weights_root: <absolute-base-weights-root>
+  output_root: <absolute-output-root>
   catalog: ../catalogs/RGB/label_catalog.yaml
   prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
-cloud:
-  source_container: vlm-zoo
-  source_prefix: weights
-  output_container: vlm-zoo
-  output_prefix: finetuned
-wandb:
-  entity: dkandiya-carnegie-mellon-university
-  project: Triage VLM
-  mode: online
-  log_model: 'false'
-  watch: 'false'
 execution:
-  training_gpus: 4
+  training_gpus: <positive-integer>
   training_devices: null
-  vllm_server_url: http://localhost:8000
-  vllm_model_name: gemma4-12b-it
+  vllm_server_url: <vllm-server-url>
+  vllm_model_name: <served-model-name>
 dataset:
   modality: RGB
-  sources:
-  - native
-  - stabilized
+  sources: []
 mixture:
   strategy: all_medical_plus_auxiliary
   shuffle: true
@@ -58,24 +32,24 @@ mixture:
     context_sources:
     - native
   camera_view:
-    enabled: true
+    enabled: <true|false>
     sources:
     - native
     questions_per_video_per_epoch: 1
   counting:
-    enabled: true
+    enabled: <true|false>
     sources:
     - native
     questions_per_video_per_epoch: 1
     timestamp_sampling: random_annotated
   subject_localization:
-    enabled: true
+    enabled: <true|false>
     sources:
     - native
     - stabilized
     questions_per_video_per_epoch: 1
   label_questions:
-    enabled: true
+    enabled: <true|false>
     excluded_categories:
     - subject_check
     - context
@@ -92,12 +66,10 @@ mixture:
       temporal:
         enabled: true
         temporal_labels_only: true
-sft:
-  recipe: sft_only
+shared:
   method: lora
   attention: sdpa
   max_length: 262144
-  effective_batch_size: 16
   video:
     fps: 10
     qwen:
@@ -126,6 +98,15 @@ sft:
     stabilized_coordinates_verified: false
   evaluation:
     max_new_tokens: 1024
+  seed: 42
+  data_loading:
+    dataloader_num_workers: 4
+    dataloader_persistent_workers: true
+    dataloader_prefetch_factor: 1
+    dataloader_pin_memory: true
+    dataloader_multiprocessing_context: spawn
+sft:
+  effective_batch_size: 16
   training:
     fsdp: true
     fsdp_config:
@@ -134,11 +115,9 @@ sft:
       activation_checkpointing: true
       cpu_offload: false
       state_dict_type: FULL_STATE_DICT
-    seed: 42
     num_train_epochs: 3
     learning_rate: 0.0001
     per_device_train_batch_size: 1
-    per_device_eval_batch_size: 1
     warmup_steps: 0.05
     weight_decay: 0.0
     adam_beta1: 0.9
@@ -154,11 +133,6 @@ sft:
     load_best_model_at_end: true
     metric_for_best_model: macro_f1
     greater_is_better: true
-    dataloader_num_workers: 4
-    dataloader_persistent_workers: true
-    dataloader_prefetch_factor: 1
-    dataloader_pin_memory: true
-    dataloader_multiprocessing_context: spawn
     accelerator_config:
       non_blocking: true
 rl:
@@ -179,7 +153,6 @@ rl:
     max_completion_length: 1024
     reward_aggregation: sum_then_normalize
     scale_rewards: group
-    equal_reward_groups: retain_with_kl
   batch:
     questions_per_update: 64
     questions_per_rollout: 64
@@ -195,27 +168,15 @@ rl:
     adam_beta2: 0.999
     adam_epsilon: 1.0e-08
     max_grad_norm: 1.0
-    gradient_checkpointing: true
-    base_dtype: bfloat16
-    adapter_dtype: float32
   execution:
     backend: fsdp2
     cpu_offload: false
     vllm_mode: server
-    rollout_gpus: 4
+    rollout_gpus: <positive-integer>
     rollout_tensor_parallel_size: null
   evaluation:
-    before_training: true
     interval_epochs: 0.25
-    save_on_evaluation: true
-    metric: medical_category_macro_f1
-    greater_is_better: true
-    starting_checkpoint_eligible: true
   rewards:
-    medical_vqa: selected_label_f1
-    single_label: exact_match
-    invalid_answer: 0.0
-    correct_negative: 1.0
     answer_and_spatial:
       answer: 0.6
       spatial: 0.4
@@ -227,8 +188,6 @@ rl:
       spatial: 0.2
       temporal: 0.2
     spatial:
-      mandatory_only: true
-      human_annotated_frames_only: true
       timestamp_tolerance_seconds: 0.5
       native_full_credit_pixels: 10.0
       native_zero_credit_pixels: 20.0
@@ -254,21 +213,11 @@ rl:
               wide_open_mouth_observed: Place the evidence point on the visibly open mouth.
           subject_type:
             mode: subject_box
-      matching: one_to_one
-      denominator: max_prediction_required_target_count
     temporal:
-      mandatory_only: true
       start_full_seconds: 0.5
       start_zero_seconds: 1.0
       end_full_seconds: 1.0
       end_zero_seconds: 2.0
-      require_positive_overlap: true
-      boundary_combination: product
-      matching: one_to_one
-      denominator: max_prediction_target_count
-    subject_localization: point_inside_subject_box
-    counting: relative_absolute_error
-    camera_view: exact_match
 env_file: ../../../../.env
 checkpoint: null
 sft_run: null

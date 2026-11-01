@@ -12,6 +12,8 @@ def load_model_config(args):
         model_config["revision"] = args.revision
     if "generation" not in model_config:
         raise ValueError("Model profile needs explicit generation settings")
+    from scripts.train.shared.contracts import validate_generation
+    validate_generation(model_config["generation"])
     if not args.inspect:
         from scripts.train.storage.cloud_models import verify_local_source
 

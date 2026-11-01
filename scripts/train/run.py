@@ -99,7 +99,7 @@ def preflight(plan):
     for name in ('train', 'validation', 'test'):
         if not (Path(c['paths']['split_dir']) / (name + '.jsonl')).is_file():
             raise ValueError(f'Missing {name}.jsonl in paths.split_dir')
-    if c['sft_run'] and not Path(c['sft_run']).is_dir():
+    if c.get('sft_run') and not Path(c['sft_run']).is_dir():
         raise ValueError('sft_run is not an existing directory')
     if c['resume'] and not (Path(c['resume']) / 'trainer_state.json').is_file():
         raise ValueError('resume must name a Trainer checkpoint')
@@ -114,7 +114,9 @@ def preflight(plan):
 def write_bundle(plan, directory):
     directory.mkdir(parents=True, exist_ok=True)
     documents = {'run.yaml': public_config(plan['run']), 'experiment.yaml': plan['experiment'],
-                 'rl.yaml': plan['rl'], 'models.yaml': plan['models']}
+                 'models.yaml': plan['models']}
+    if plan['rl'] is not None:
+        documents['rl.yaml'] = plan['rl']
     for name, value in documents.items():
         text = yaml.safe_dump(value, sort_keys=False)
         path = directory / name

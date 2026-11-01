@@ -34,6 +34,9 @@ def load_training_config(path, _parents=()):
         )
     validate_augmentation(config)
     validate_mixture(config)
+    if 'method' in config:
+        from scripts.train.shared.contracts import validate_experiment
+        validate_experiment(config, sft=config.get('recipe') == 'sft_only')
     return config
 
 
@@ -215,6 +218,8 @@ if __name__ == "__main__":
 
 def evaluation_settings(config, model_profile):
     """Resolve the same validation decoding and answer budget for SFT and RL."""
+    from scripts.train.shared.contracts import validate_generation
+    validate_generation(model_profile['generation'])
     limit = config['evaluation']['max_new_tokens']
     if type(limit) is not int or limit <= 0:
         raise ValueError('evaluation.max_new_tokens must be a positive integer')

@@ -7,8 +7,8 @@ import math
 from copy import deepcopy
 from pathlib import Path
 
-from scripts.train.shared.paths import ANSWER_ONLY_CONFIG_DIR
 from scripts.train.shared.config import load_training_config
+from scripts.train.shared.contracts import validate_rl_contract
 
 
 def positive(value, name, integer=False):
@@ -19,6 +19,7 @@ def positive(value, name, integer=False):
 
 
 def validate_recipe(recipe):
+    validate_rl_contract(recipe, resolved=True)
     if recipe['recipe'] not in ('rl_only', 'sft_then_rl'):
         raise ValueError('Expected rl_only or sft_then_rl recipe')
     initialization = recipe['initialization']
@@ -225,8 +226,7 @@ def inspect_dataset(args):
 
 def recipe_cli(expected_recipe=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    default = ANSWER_ONLY_CONFIG_DIR / 'recipes' / f'{expected_recipe}.yaml' if expected_recipe else None
-    parser.add_argument('--config', type=Path, default=default, required=expected_recipe is None)
+    parser.add_argument('--config', type=Path, required=True, help='Resolved RL stage YAML produced by run.py')
     parser.add_argument('--inspect', action='store_true', help='Inspect configuration; no training')
     for name in ('media-root','split-dir','catalog','prompts'):
         parser.add_argument('--'+name,type=Path)

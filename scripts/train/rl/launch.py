@@ -8,7 +8,7 @@ import os
 from scripts.train.shared.storage_settings import local_weights_directory, local_dataset_directory
 from pathlib import Path
 
-from scripts.train.shared.paths import REPO_ROOT, CONFIG_DIR, ANSWER_ONLY_CONFIG_DIR
+from scripts.train.shared.paths import REPO_ROOT, CONFIG_DIR
 from scripts.train.shared.data import atomic_json, load_splits, read_yaml
 from scripts.train.rl.recipe import inspect_dataset, inspect_recipe, load_recipe, resolve_model_recipe
 from scripts.train.rl.runtime import training_arguments, validate_sft_start
@@ -30,7 +30,7 @@ def QuestionDataset(rows):
 
 def parse_args(recipe):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, default=ANSWER_ONLY_CONFIG_DIR / 'recipes' / f'{recipe}.yaml')
+    parser.add_argument('--config', type=Path, required=True, help='Resolved RL stage YAML produced by run.py')
     parser.add_argument('--models', type=Path, default=CONFIG_DIR / 'models.yaml')
     parser.add_argument('--model')
     for key in ('media-root', 'split-dir', 'catalog', 'prompts', 'output-dir', 'sft-run', 'resume'):
@@ -172,6 +172,7 @@ def main(expected_recipe):
     evaluator = MedicalVLLMEvaluator(
         client, features, processor, read_yaml(args.catalog), evaluation['generation'],
         run_id, max_tokens=evaluation['max_new_tokens'],
+        experiment=experiment, medical_templates=read_yaml(args.prompts),
     )
     trainer = VideoGSPOTrainer(
         model=model, args=GRPOConfig(**train_args), processing_class=processor,

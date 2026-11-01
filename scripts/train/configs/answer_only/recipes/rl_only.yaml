@@ -1,7 +1,0 @@
-extends: ../shared/gspo.yaml
-recipe: rl_only
-experiment_config: ../experiments/rgb_combined.yaml
-initialization:
-  source: cloud_base
-  continue_adapter: false
-  fresh_optimizer: true

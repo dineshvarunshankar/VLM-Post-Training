@@ -8,7 +8,7 @@ import os
 from scripts.train.shared.storage_settings import local_weights_directory, local_dataset_directory
 from pathlib import Path
 
-from scripts.train.shared.paths import REPO_ROOT, CONFIG_DIR, ANSWER_ONLY_CONFIG_DIR
+from scripts.train.shared.paths import REPO_ROOT, CONFIG_DIR
 from scripts.train.shared.data import atomic_json, load_splits, read_yaml
 from scripts.train.shared.config import (
     load_training_config,
@@ -35,13 +35,16 @@ def resolve_training_args(config, data_parallel_size):
             "Effective batch size must be divisible by per-device batch size times data-parallel size"
         )
     args["gradient_accumulation_steps"] = effective // batch_per_step
+    if args["dataloader_num_workers"] == 0:
+        args.pop("dataloader_prefetch_factor", None)
+        args.pop("dataloader_multiprocessing_context", None)
     return args
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--config", type=Path, default=ANSWER_ONLY_CONFIG_DIR / "recipes/sft.yaml"
+        "--config", type=Path, required=True, help="Resolved SFT stage YAML produced by run.py"
     )
     parser.add_argument("--model", required=True, help="Key in configs/models.yaml")
     parser.add_argument(
@@ -108,6 +111,7 @@ def build_training_config(output, train_args):
     from trl import SFTConfig
 
     train_args = {"report_to": "none", **train_args}
+    train_args["per_device_eval_batch_size"] = 1
     return SFTConfig(
         output_dir=str(output / "checkpoints"),
         remove_unused_columns=False,
@@ -244,6 +248,7 @@ def main():
         read_yaml(args.catalog), evaluation["generation"],
         f"{args.run_date}:{args.model}:{args.run_name}",
         max_tokens=evaluation["max_new_tokens"],
+        experiment=config, medical_templates=read_yaml(args.prompts),
     )
     trainer = MedicalSFTTrainer(
         model=model,

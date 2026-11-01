@@ -11,7 +11,7 @@ from jsonschema.exceptions import ValidationError
 from scripts.train.shared.paths import ANSWER_ONLY_PROMPT_DIR
 from scripts.train.shared.spatial_policy import spatial_rule
 from scripts.train.shared.data import check_answer, label_keys, read_json, read_yaml, sha256
-from scripts.train.shared.grounding import temporal_target, video_geometry, subject_targets, normalized_subject_box, human_evidence, spatial_target, specialize_evidence_schema
+from scripts.train.shared.grounding import temporal_target, video_geometry, subject_targets, normalized_subject_box, human_evidence, spatial_target, specialize_evidence_schema, require_matching_geometry, temporal_duration_limit
 from scripts.train.rl.rewards import combined_reward, count_reward, medical_reward, number, parse_prediction, spatial_reward, temporal_reward, subject_reward
 
 
@@ -89,10 +89,7 @@ class RewardPreparer:
             if task == 'subject_localization':
                 folder = Path(row['video']).parent
                 meta = self.annotation(folder, 'meta.json')
-                fps, count, width, height = video_geometry(meta)
-                expected = dict(width=width,height=height,n_frames=count,fps=fps)
-                if verified_geometry is None or any(verified_geometry.get(k) != v for k,v in expected.items()):
-                    raise ValueError('Subject rewards require decoded geometry matching annotation metadata')
+                require_matching_geometry(meta, verified_geometry)
                 candidates = subject_targets(self.annotation(folder,'counting.json'),
                     self.annotation(folder,'points.json'),self.annotation(folder,'boxes.json'),meta)
                 matches = [p for p in candidates if p['timestamp'] == reference['timestamp']]
@@ -121,9 +118,7 @@ class RewardPreparer:
                     specialize_evidence_schema(schema, cue)
                     if positive:
                         fps, count, width, height = video_geometry(meta)
-                        expected = dict(width=width,height=height,n_frames=count,fps=fps)
-                        if verified_geometry is None or any(verified_geometry.get(k) != v for k,v in expected.items()):
-                            raise ValueError('Spatial rewards require decoded geometry matching annotation metadata')
+                        require_matching_geometry(meta, verified_geometry)
                         variant = reference['variant']
                         full = rule.get('full_credit_pixels', self.reward_config['spatial'][f'{variant}_full_credit_pixels'])
                         zero = rule.get('zero_credit_pixels', self.reward_config['spatial'][f'{variant}_zero_credit_pixels'])
@@ -148,12 +143,10 @@ class RewardPreparer:
                     if cue.get('temporal') is not True:
                         raise ValueError('Span question requires a mandatory temporal label')
                     if positive:
-                        if not number(meta.get('duration_s')) or meta['duration_s'] <= 0:
-                            raise ValueError('Temporal rewards require a verified video duration')
                         spans, _ = temporal_target(cue,meta)
                         if target['time_spans'] != spans:
                             raise ValueError('Prepared spans differ from human GT')
-                        context['duration'] = meta['duration_s']
+                        context['duration'] = temporal_duration_limit(meta)
                     elif target['time_spans']:
                         raise ValueError('Negative GT must have empty spans')
         Draft202012Validator.check_schema(schema)

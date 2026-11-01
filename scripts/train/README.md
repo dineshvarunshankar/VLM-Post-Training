@@ -36,8 +36,9 @@ GT and split commands choose the dataset path in this order:
 Set only the path variable you need, or pass `--media-root` explicitly.
 The GT and split commands below need no environment variables or API keys because they include the path.
 
-For training, the run YAML supplies dataset paths, output paths, model selection, and W&B configuration.
-Its `cloud` and `wandb` values override matching environment values.
+For training, the run YAML supplies paths, model selection, tasks, resources, and training parameters.
+The launcher loads the selected profile from `configs/models.yaml` and cloud/W&B settings from `configs/storage.yaml`.
+Those resolved cloud/W&B settings take precedence over matching environment values. Credentials stay in `.env` or the shell.
 Its `execution.training_devices` sets `CUDA_VISIBLE_DEVICES` for the training processes.
 The server command below sets its own GPU allocation separately.
 
@@ -190,18 +191,35 @@ Keep checkpoints and exports on persistent storage. Training paths remain config
 ## Configure a run
 
 
-Use one complete YAML per run. Copy an example within the same directory:
+Use one complete YAML per run. Choose a template for the training recipe:
+
+| Template | Stages | Training sections |
+|---|---|---|
+| [sft.yaml](configs/templates/sft.yaml) | Supervised fine-tuning | `shared`, `sft` |
+| [rl_only.yaml](configs/templates/rl_only.yaml) | GSPO from base weights | `shared`, `rl` |
+| [sft_then_rl.yaml](configs/templates/sft_then_rl.yaml) | SFT followed by GSPO | `shared`, `sft`, `rl` |
+
+Copy the selected template into `configs/runs/` with a new filename:
 
 ```bash
-cp scripts/train/configs/runs/qwen9b_stabilized_medical.yaml scripts/train/configs/runs/my_run.yaml
+cp -i scripts/train/configs/templates/sft.yaml scripts/train/configs/runs/my_run.yaml
 ```
 
-| Example | Model | Videos | Tasks |
-|---|---|---|---|
-| [qwen9b_stabilized_medical.yaml](configs/runs/qwen9b_stabilized_medical.yaml) | Qwen 3.5 9B | Stabilized | Medical VQA |
-| [gemma12b_combined_auxiliary.yaml](configs/runs/gemma12b_combined_auxiliary.yaml) | Gemma 4 12B | Native + stabilized | Medical VQA + auxiliary |
+Each template contains complete training parameters and placeholders for run-specific choices. It is not ready to launch.
+Replace every `<...>` value in the copy. Use integers for GPU counts and YAML booleans (`true` or `false`) for task switches.
+Set `dataset.sources` to `[stabilized]` or `[native, stabilized]`.
+Set `model` to a key from [configs/models.yaml](configs/models.yaml). The launcher loads that profile automatically.
+Cloud locations and W&B settings come from [configs/storage.yaml](configs/storage.yaml).
+Neither catalog needs to be copied into the run YAML. There are no inherited training recipe or experiment files.
+Changes to the template do not change existing run configurations.
+Unknown fields and unsupported values fail configuration inspection before datasets or model weights are loaded.
+Existing snapshots can retain fixed-policy fields only with their supported values.
 
-Both examples start with SFT. Larger model profiles are available in [configs/models.yaml](configs/models.yaml).
+Medical VQA remains enabled for all runs. For medical-only training, set the four auxiliary task switches to `false`.
+Enable the auxiliary tasks you want to include. Their source restrictions and sampling defaults remain in the template.
+The `shared` section contains video processing, LoRA, augmentation, coordinate checks, evaluation output limits, seed, and data loading.
+Stage sections contain their optimizer, batch, checkpoint, and reward settings. SFT-only runs contain no RL section.
+RL-only runs contain no SFT section. SFT-to-RL runs use the same `shared` settings for both stages.
 
 Set the run YAML fields:
 
@@ -209,7 +227,7 @@ Set the run YAML fields:
 |---|---|
 | `run.name`, `run.date` | Unique name and quoted `YYYY-MM-DD` date |
 | `recipe` | `sft`, `rl_only`, or `sft_then_rl` |
-| `model`, `model_settings` | Model identifier and its complete pinned profile |
+| `model` | `qwen3.5-9b`, `qwen3.8-27b`, `gemma4-12b-it`, or `gemma4-31b-it` |
 | `paths.media_root` | Local parent of `06` and `07` |
 | `paths.split_dir` | Directory containing `train.jsonl`, `validation.jsonl`, and `test.jsonl` |
 | `paths.weights_root` | Local parent of `<model-repository>/<revision>` |
@@ -217,16 +235,18 @@ Set the run YAML fields:
 | `paths.catalog`, `paths.prompts` | RGB catalog and medical prompt YAML |
 | `dataset.sources` | `[stabilized]` or `[native, stabilized]` |
 | `mixture` | Enabled tasks and sampling |
-| `sft`, `rl` | Training configuration for each stage |
+| `shared` | Video, LoRA, evaluation output limit, seed, data loading, and data checks |
+| `sft`, `rl` | Complete parameters for the stages present in the selected template |
 | `execution` | Training GPU count, device IDs, and external vLLM endpoint/name |
-| `cloud` | Base-weight source and fine-tuned destination |
-| `wandb` | Entity, project, mode, and tracking configuration |
 | `env_file` | Credentials file. Shell values take precedence |
 
-Relative paths resolve from the YAML directory. The example paths are placeholders.
-When changing models, copy the matching full profile from `configs/models.yaml` into `model_settings`.
+Relative paths resolve from the YAML directory. The template dataset, weights, and output paths are placeholders.
+Copying from `configs/templates/` to `configs/runs/` preserves the relative paths to the catalog, prompts, and repository `.env`.
+To change models, select another model ID and review its resource requirements.
 
 Keep credentials in `.env` or the shell. Keep paths and run choices in the run YAML.
+Set the run name and date before launch. Preserve the configuration after training starts, except when setting `resume`.
+Create a separate run YAML for each new experiment.
 
 | Recipe | Starting weights | Stages |
 |---|---|---|
@@ -246,7 +266,7 @@ For online W&B tracking, add your key to the local `.env`:
 WANDB_API_KEY=your_private_key
 ```
 
-The run YAML already contains the project and entity. Set `wandb.mode` to `online`, `offline`, or `disabled`.
+The project and entity are defined once in `configs/storage.yaml`. Set its `wandb.mode` to `online`, `offline`, or `disabled`.
 W&B logs training losses, learning rates, evaluation metrics, and available RL rewards.
 
 W&B run names follow `<date>/<model-repository>/answer_only/<stage>/<run-name>`.
@@ -270,8 +290,8 @@ uv run python scripts/train/model_storage.py download \
 ```
 
 Remove `--inspect` to download. This command uses the matching profile in `configs/models.yaml`.
-Keep its revision consistent with `model_settings` in the run YAML.
-For a custom revision, supply `--models /path/to/models.yaml` with the same profile.
+The downloader and run launcher use the same model catalog, including its pinned revision.
+For a custom downloader catalog, supply `--models /path/to/models.yaml` and keep its profile consistent with the training catalog.
 
 The default source is `vlm-zoo/weights/<model-repository>/<revision>/`, with fallback to the older repository-only prefix.
 Downloads check revisions and checksums, resume interrupted transfers, and reject different existing content.
@@ -280,7 +300,7 @@ Training uses the verified local copy with network fallback disabled. Public bas
 The standalone downloader reads cloud defaults from `configs/storage.yaml`. It does not read the run YAML.
 `AIRLAB_SWIFT_URL` overrides the default Swift endpoint.
 Without `--weights-root` or `LOCAL_WEIGHTS_ROOT`, `AIRLAB_WEIGHTS_DIR` supplies the base-weight directory directly.
-For a different source, set `AIRLAB_SOURCE_CONTAINER` and `AIRLAB_SOURCE_PREFIX` in that command's shell to match `cloud`.
+For a different download source, set `AIRLAB_SOURCE_CONTAINER` and `AIRLAB_SOURCE_PREFIX` in that command's shell to match the storage catalog.
 
 ## Start the vLLM server
 
@@ -432,6 +452,9 @@ uv run --group rl python scripts/train/run.py --config scripts/train/configs/run
 ```
 
 The launcher starts one process per configured training GPU on a single host.
+It saves the resolved YAML files under `paths.output_root/.run-configs/` and records the launch configuration in each stage's `run.json`.
+The snapshot includes the selected model profile and storage settings. Resume rejects changes to those resolved values.
+Existing complete run YAMLs with `schema_version: 1` remain supported. New templates use `schema_version: 2`.
 For SFT → RL, RL starts only after SFT succeeds. Each stage has a separate output directory.
 Training never uploads model weights automatically.
 
@@ -537,11 +560,13 @@ There are no fixed per-batch task quotas.
 | Auxiliary task | Default sampling |
 |---|---|
 | Camera viewpoint | One question per eligible native video |
-| Counting | One annotated timestamp per eligible native video |
+| Counting | One timestamp with complete human visibility annotations per eligible native video |
 | Subject localization | One human subject point per eligible video |
 | Label questions | Two observables and two assessments when both subcategories exist. Otherwise one label |
 
 Label sampling is capped by available labels and prefers a positive/negative pair. It excludes context and subject-check.
+Counting uses only frames where every relevant person's record is marked `by: human`, including records marked not visible.
+Frames with propagated or missing person records are excluded. Clips without a qualifying frame have no counting question and are reported.
 For medical-only training, disable `camera_view`, `counting`, `subject_localization`, and `label_questions` in `mixture`.
 Tasks with no allowed source in the selected dataset are reported as inactive.
 
@@ -557,7 +582,7 @@ Examples that require more frames than the budget are excluded and reported.
 Before enabling stabilized spatial tasks, check the corrected coordinates and set:
 
 ```yaml
-sft:
+shared:
   data_checks:
     stabilized_coordinates_verified: true
 ```
@@ -590,7 +615,7 @@ These reward rules do not change human annotations. Temporal-span tolerances are
 <summary>Training defaults and evaluation metrics</summary>
 
 
-The example YAMLs record all values. Current shared defaults include:
+The three template YAMLs record the training values. Their current values include:
 
 | Configuration | Value |
 |---|---|
@@ -607,7 +632,25 @@ LoRA covers selected language, vision, and connector projections. `run.json` rec
 
 All recipes use the same medical evaluator through vLLM, with thinking disabled and category-constrained JSON.
 Selection rules are checked after generation. Generation parameters do not control the teacher-forced SFT loss.
-Validation uses the generation configuration in the model profile. RL rollout sampling uses the RL configuration.
+Validation uses the generation configuration in the model profile, including `min_p`. RL rollout sampling uses the RL configuration.
+Evaluation processes one example per training rank. There is no configurable evaluation batch size.
+Worker prefetch and multiprocessing settings apply when `dataloader_num_workers` is greater than zero.
+
+The following behavior is fixed in the implementation:
+
+- Base weights use BF16; trainable adapters use FP32.
+- RL uses FSDP2 activation checkpointing and retains equal-reward groups with the KL term.
+- RL evaluates and saves the starting policy, which is eligible for best-checkpoint selection.
+- RL saves at each evaluation and selects the highest medical category macro F1.
+- Medical rewards use selected-label F1. Single-label and camera-view rewards use exact match.
+- Counting uses relative absolute error. Subject localization accepts a point inside the subject box.
+- Invalid answers receive zero. Correct negative answers with empty grounding arrays receive one.
+- Evidence rewards use mandatory human-annotated points, one-to-one matching, and the larger prediction/required-target count as denominator.
+- Temporal rewards require overlap, multiply start/end boundary credit, and use one-to-one matching with the larger prediction/target count as denominator.
+
+Configure reward weights, tolerances, label policies, and the evaluation interval under `rl`.
+Configure auxiliary task inclusion with the `enabled` switches under `mixture`.
+RL disables LoRA dropout; SFT uses `shared.lora.lora_dropout`.
 
 Best-checkpoint selection uses category-balanced macro F1:
 
@@ -628,7 +671,9 @@ An empty test set produces an explicit skipped report.
 
 | Path | Purpose |
 |---|---|
-| `run.py`, `configs/runs/` | Single-YAML launch and examples |
+| `run.py` | Launch one run from its YAML |
+| `configs/templates/` | Reusable run templates |
+| `configs/runs/` | User-created run configurations |
 | `prepare.py`, `create_splits.py`, `splits/` | Human targets and split references |
 | `shared/` | Video processing, tasks, metrics, configuration, and run metadata |
 | `sft/` | TRL SFT trainer and launch |
@@ -636,9 +681,10 @@ An empty test set produces an explicit skipped report.
 | `storage/`, `model_storage.py` | Download, merge, and publish |
 | `prompts/answer_only/RGB/` | Medical and auxiliary task prompts |
 
-The direct entry points remain available: `train_sft.py`, `train_rl.py`, and `train_sft_then_rl.py`.
-Their `--config` argument accepts the older experiment/recipe format, not the complete run YAML.
-Use `--help` for their arguments. `train_sft_then_rl.py` runs only the RL stage from an existing SFT run.
+The launcher calls `train_sft.py`, `train_rl.py`, and `train_sft_then_rl.py` as stage entry points.
+Their required `--config` argument takes a resolved stage file from the saved `.run-configs/` bundle, not a run template.
+Existing stage configurations remain readable. Use `--help` for direct diagnostic arguments.
+`train_sft_then_rl.py` runs only the RL stage from an existing SFT run.
 
 Direct SFT `--inspect` reads prepared examples. `--check-batch` also decodes a video through the processor without loading model weights.
 Direct RL inspection with dataset paths checks media geometry and reward targets, which can take time.

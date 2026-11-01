@@ -63,7 +63,7 @@ class VideoRolloutClient:
         self._checked = True
 
     def generate(self, packets, *, policy_version, temperature, top_p, top_k,
-                 repetition_penalty, max_tokens, schemas=None, presence_penalty=0.0, seed=None):
+                 repetition_penalty, max_tokens, schemas=None, presence_penalty=0.0, min_p=0.0, seed=None):
         """Return one response per entry, grouping shared packets into n-way requests.
 
         policy_version is set by the weight-synchronization caller. Its cache salt
@@ -77,6 +77,8 @@ class VideoRolloutClient:
                             ('repetition_penalty', repetition_penalty)):
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or (name != 'temperature' and value == 0):
                 raise ValueError(f'{name} must be positive and finite')
+        if type(min_p) not in (int, float) or not math.isfinite(min_p) or not 0 <= min_p <= 1:
+            raise ValueError('min_p must be finite and in [0, 1]')
         if top_p > 1 or type(top_k) is not int or top_k < 0:
             raise ValueError('Invalid top_p or top_k')
         if type(max_tokens) is not int or max_tokens < 1:
@@ -99,7 +101,7 @@ class VideoRolloutClient:
         def send(group):
             packet, indices = group
             sampling = {
-                'n': len(indices), 'temperature': temperature, 'top_p': top_p,
+                'n': len(indices), 'temperature': temperature, 'top_p': top_p, 'min_p': min_p,
                 'top_k': -1 if top_k == 0 else top_k,
                 'repetition_penalty': repetition_penalty,
                 'max_tokens': max_tokens, 'logprobs': 0, 'detokenize': False,
