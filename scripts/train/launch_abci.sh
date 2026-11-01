@@ -113,6 +113,8 @@ import requests, sys
 response = requests.get(f'http://127.0.0.1:{sys.argv[1]}/health', timeout=10)
 response.raise_for_status()
 PY
+  # Variable video shapes otherwise leave large unusable gaps in reserved memory.
+  export PYTORCH_ALLOC_CONF=expandable_segments:True
   export CUDA_VISIBLE_DEVICES="$train_gpu"
   exec python scripts/train/run.py --config "$config"
 else
@@ -128,7 +130,10 @@ print(c['model'])
 print(c['shared']['max_length'])
 PY
 )
+  server_args=()
   if [[ "${model[2]}" == gemma* ]]; then
+    # Gemma graph replay fails after live weight transfer on the current vLLM build.
+    server_args+=(--enforce-eager)
     [[ "$frames" =~ ^[0-9]+$ && "$frames" -ge 2 ]] || { echo 'Set ABCI_PROFILE_VIDEO_FRAMES to the verified dataset bound for Gemma.' >&2; exit 2; }
   else
     frames=2
@@ -136,7 +141,7 @@ PY
   kwargs=$(python -m scripts.train.rl.rollout.video_profile --run "$config" --profile-video-frames "$frames" --field mm_processor_kwargs)
   limits=$(python -m scripts.train.rl.rollout.video_profile --run "$config" --profile-video-frames "$frames" --field limit_mm_per_prompt)
   export CUDA_VISIBLE_DEVICES="$eval_gpu" VLLM_SERVER_DEV_MODE=1
-  exec vllm serve "${model[0]}" --served-model-name "${model[1]}" --host 127.0.0.1 --port "$server_port" \
+  exec vllm serve "${model[0]}" "${server_args[@]}" --served-model-name "${model[1]}" --host 127.0.0.1 --port "$server_port" \
     --dtype bfloat16 --tensor-parallel-size 1 --data-parallel-size 1 --max-num-seqs 1 \
     --gpu-memory-utilization 0.8 --logprobs-mode processed_logprobs --max-model-len "${model[3]}" \
     --enable-scale-out --enable-mm-embeds --video-pruning-rate 0 \
