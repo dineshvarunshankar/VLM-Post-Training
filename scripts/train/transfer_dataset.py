@@ -3,7 +3,8 @@
 
 Weights: --weights-root PATH --destination SSH_ALIAS:/absolute/base-weights --inspect
 The SSH alias must work from this machine. Both ends need rsync; the remote
-weight verifier also needs python3. Remove --inspect to copy and verify hashes.
+weight verifier also needs python3. Preview checks metadata only, not content
+checksums. Remove --inspect to copy and verify hashes.
 """
 
 import argparse
@@ -136,10 +137,11 @@ def prepare_transfer(root, split):
                         counts, sum(stamps[path][0] for path in files))
 
 
-def check_weight_files(root, records, preflight=False):
+def check_weight_files(root, records, preflight=False, check_hashes=True):
     """Standalone verifier, also executed over SSH using only Python's standard library."""
     from pathlib import Path
     import hashlib
+    import time
     root = Path(root)
     for name in records:
         if name.endswith('/cloud_source.json'):
@@ -154,7 +156,11 @@ def check_weight_files(root, records, preflight=False):
                     if path.is_file() and str(relative) not in records:
                         if '.rsync-partial' not in relative.parts:
                             raise ValueError(f'Unexpected model file: {relative}')
-    for name, record in records.items():
+    total = sum(record['bytes'] for record in records.values())
+    completed = 0
+    started = time.monotonic()
+    last_report = started
+    for number, (name, record) in enumerate(records.items(), 1):
         if not name or name.startswith('/') or any(x in ('', '.', '..') for x in name.split('/')) or '\\' in name:
             raise ValueError(f'Unsafe weight path: {name}')
         path = root / name
@@ -166,15 +172,25 @@ def check_weight_files(root, records, preflight=False):
             continue
         if not path.is_file() or path.stat().st_size != record['bytes']:
             raise ValueError(f'Weight size mismatch: {name}')
+        if not check_hashes:
+            continue
+        print(f'SHA-256 [{number}/{len(records)}] {name} ({record["bytes"] / 1024**3:.2f} GiB)', flush=True)
         digest = hashlib.sha256()
         with path.open('rb') as stream:
             for block in iter(lambda: stream.read(8 * 1024 * 1024), b''):
                 digest.update(block)
+                completed += len(block)
+                now = time.monotonic()
+                if now - last_report >= 5:
+                    rate = completed / max(now - started, 0.001) / 1024**2
+                    print(f'SHA-256 progress: {completed / 1024**3:.2f}/{total / 1024**3:.2f} GiB, {rate:.1f} MiB/s', flush=True)
+                    last_report = now
         if digest.hexdigest() != record['sha256']:
             raise ValueError(f'Weight checksum mismatch: {name}')
+        print(f'SHA-256 verified: {name}', flush=True)
 
 
-def prepare_weights(root):
+def prepare_weights(root, *, check_hashes=True):
     root = Path(root).expanduser().absolute()
     if any(p.is_symlink() for p in (root, *root.parents)):
         raise ValueError('Weight root must not contain symlinks')
@@ -200,7 +216,7 @@ def prepare_weights(root):
         records[str(path.relative_to(root))] = {'bytes': path.stat().st_size, 'sha256': digest(path)}
     if set(records) != {str(p.relative_to(root)) for p in files}:
         raise ValueError('Weights contain missing or unmanifested files (including partial downloads)')
-    check_weight_files(root, records)
+    check_weight_files(root, records, check_hashes=check_hashes)
     plan = TransferPlan(root, sorted(records), stamps, {'models': len(manifests)},
                         sum(r['bytes'] for r in records.values()), records)
     plan.verify_unchanged()
@@ -246,7 +262,7 @@ def transfer(plan, destination, inspect=False):
         listing.write_bytes(b''.join(os.fsencode(path) + b'\0' for path in plan.files))
         command = [executable, '-rlt', '--protect-args', '--from0', f'--files-from={listing}',
                    '--partial-dir=.rsync-partial', '--stats', '--human-readable']
-        if plan.checksums is not None:
+        if plan.checksums is not None and not inspect:
             command.append('--checksum')
         if inspect:
             command.extend(['--dry-run', '--itemize-changes'])
@@ -277,8 +293,8 @@ def main(argv=None):
             if args.split_dir is not None:
                 parser.error('--split-dir is only used with --media-root')
             validate_destination(args.destination, args.weights_root.expanduser().resolve())
-            print('Verifying source weight SHA-256 checksums...', flush=True)
-            plan = prepare_weights(args.weights_root)
+            print('Checking weight manifests, paths, and sizes (preview; no content hashing)...' if args.inspect else 'Verifying source weight SHA-256 checksums...', flush=True)
+            plan = prepare_weights(args.weights_root, check_hashes=not args.inspect)
         else:
             if args.split_dir is None:
                 parser.error('--split-dir is required with --media-root')
@@ -297,7 +313,7 @@ def main(argv=None):
         if result:
             print(f'rsync exited with code {result}; resolve the reported error and rerun the same command.', file=sys.stderr)
         else:
-            print('Preview complete.' if args.inspect else ('Transfer complete; source and destination SHA-256 checks passed.' if plan.checksums is not None else 'Transfer complete; source metadata remained unchanged.'))
+            print(('Preview complete; weight contents were not checksum-verified.' if plan.checksums is not None else 'Preview complete.') if args.inspect else ('Transfer complete; source and destination SHA-256 checks passed.' if plan.checksums is not None else 'Transfer complete; source metadata remained unchanged.'))
         return result
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f'Dataset transfer failed: {error}', file=sys.stderr)

@@ -83,6 +83,37 @@ class WeightTransferTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Symlink'):
             transfer.verify_weights_destination(plan, str(dest), preflight=True)
 
+    def test_preview_does_not_read_weight_contents(self):
+        original = Path.open
+        def guarded(path, *args, **kwargs):
+            if path.name == 'weights.safetensors':
+                self.fail('Preview must not read weight contents')
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'open', guarded):
+            plan = transfer.prepare_weights(self.root, check_hashes=False)
+        self.assertEqual(len(plan.files), 3)
+        (self.model / 'weights.safetensors').write_bytes(b'short')
+        with self.assertRaisesRegex(ValueError, 'size'):
+            transfer.prepare_weights(self.root, check_hashes=False)
+
+    def test_preview_rsync_does_not_request_checksum_scan(self):
+        plan = transfer.prepare_weights(self.root)
+        with patch.object(transfer.shutil, 'which', return_value='/usr/bin/rsync'), \
+             patch.object(transfer.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            transfer.transfer(plan, str(Path(self.tmp.name)/'dest'), inspect=True)
+            self.assertNotIn('--checksum', run.call_args.args[0])
+            self.assertIn('--dry-run', run.call_args.args[0])
+
+    def test_hashing_reports_progress(self):
+        import contextlib
+        import io
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            transfer.prepare_weights(self.root)
+        self.assertIn('SHA-256', output.getvalue())
+        self.assertIn('weights.safetensors', output.getvalue())
+
     def test_stale_adapter_rejected(self):
         plan = transfer.prepare_weights(self.root)
         (self.model / 'adapter_config.json').write_text('{}')
