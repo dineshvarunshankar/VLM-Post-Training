@@ -137,7 +137,9 @@ def validate_experiment(config, *, sft=False):
     boolean(lora['use_rslora'], 'lora.use_rslora')
     keys(config['data_checks'], 'stabilized_coordinates_verified', 'data_checks')
     boolean(config['data_checks']['stabilized_coordinates_verified'], 'stabilized_coordinates_verified')
-    keys(config['evaluation'], 'max_new_tokens', 'evaluation', 'sources aggregation request_batch_size')
+    keys(config['evaluation'], 'max_new_tokens', 'evaluation', 'sources aggregation request_batch_size generation')
+    if 'generation' in config['evaluation']:
+        validate_generation(config['evaluation']['generation'])
     if 'request_batch_size' in config['evaluation']:
         number(config['evaluation']['request_batch_size'], 'evaluation.request_batch_size', integer=True, strict=True)
     if 'sources' in config['evaluation'] or 'aggregation' in config['evaluation']:

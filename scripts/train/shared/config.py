@@ -222,11 +222,12 @@ if __name__ == "__main__":
 def evaluation_settings(config, model_profile):
     """Resolve the same validation decoding and answer budget for SFT and RL."""
     from scripts.train.shared.contracts import validate_generation
-    validate_generation(model_profile['generation'])
+    generation = config['evaluation'].get('generation', model_profile['generation'])
+    validate_generation(generation)
     limit = config['evaluation']['max_new_tokens']
     if type(limit) is not int or limit <= 0:
         raise ValueError('evaluation.max_new_tokens must be a positive integer')
-    return {'generation': deepcopy(model_profile['generation']), 'max_new_tokens': limit}
+    return {'generation': deepcopy(generation), 'max_new_tokens': limit}
 
 
 def validate_grounding_readiness(config):
