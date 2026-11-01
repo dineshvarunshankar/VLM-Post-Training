@@ -36,7 +36,7 @@ export HOME="$work/runtime/vlm-post-training/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 export TMPDIR="$tmp" XDG_CACHE_HOME="$work/cache" HF_HOME="$work/cache/huggingface"
 export TORCH_HOME="$work/cache/torch" TRITON_CACHE_DIR="$work/cache/triton"
-export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${ffmpeg_bin:+$ffmpeg_bin/../lib:}/opt/hpcx/ucx/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false
 unset PYTHONPATH PYTHONHOME WANDB_API_KEY WANDB_BASE_URL
 python - "$config" "$mode" <<'PY'
