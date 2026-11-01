@@ -293,7 +293,7 @@ def main(argv=None):
             if args.split_dir is not None:
                 parser.error('--split-dir is only used with --media-root')
             validate_destination(args.destination, args.weights_root.expanduser().resolve())
-            print('Checking file list and sizes...' if args.inspect else 'Verifying source weight SHA-256 checksums...', flush=True)
+            print('Checking weight manifests, paths, and sizes (preview; no content hashing)...' if args.inspect else 'Verifying source weight SHA-256 checksums...', flush=True)
             plan = prepare_weights(args.weights_root, check_hashes=not args.inspect)
         else:
             if args.split_dir is None:
@@ -313,7 +313,7 @@ def main(argv=None):
         if result:
             print(f'rsync exited with code {result}; resolve the reported error and rerun the same command.', file=sys.stderr)
         else:
-            print(('Preview complete. Checksums will be verified during transfer.' if plan.checksums is not None else 'Preview complete.') if args.inspect else ('Transfer complete; source and destination SHA-256 checks passed.' if plan.checksums is not None else 'Transfer complete; source metadata remained unchanged.'))
+            print(('Preview complete; weight contents were not checksum-verified.' if plan.checksums is not None else 'Preview complete.') if args.inspect else ('Transfer complete; source and destination SHA-256 checks passed.' if plan.checksums is not None else 'Transfer complete; source metadata remained unchanged.'))
         return result
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f'Dataset transfer failed: {error}', file=sys.stderr)
