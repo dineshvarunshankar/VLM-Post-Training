@@ -73,14 +73,14 @@ shared:
   attention: sdpa
   max_length: 262144
   video:
-    fps: 10
+    fps: 5
     qwen:
       max_pixels: 251658240
     gemma:
       max_soft_tokens: 280
     sources:
       native:
-        fps: 10
+        fps: 5
         max_soft_tokens: 280
         max_pixels_per_frame: 645120
       stabilized:

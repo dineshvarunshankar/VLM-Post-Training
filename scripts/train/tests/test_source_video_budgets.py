@@ -64,7 +64,8 @@ class SourceVideoBudgets(unittest.TestCase):
             config=plan['experiment']
             self.assertEqual(config['training']['optim'],'adamw_torch_fused')
             self.assertEqual(config['video']['sources']['stabilized']['fps'],5)
-            self.assertEqual(config['video']['sources']['native']['fps'],10)
+            self.assertEqual(config['video']['sources']['native']['fps'],5)
+            self.assertEqual(config['video']['fps'],5)
             if path.name.startswith('gemma'):
                 self.assertEqual(config['attention'],'flex_attention')
 
