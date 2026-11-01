@@ -1,22 +1,8 @@
 {
   "nodes": {
-    "node_qwen9b_sft_native_stabilized_medical": [
+    "node_qwen9b_sft_native_stabilized_medical_camera_viewpoint": [
       {
-        "config": "scripts/train/configs/runs/qwen9b_sft_native_stabilized_medical.yaml",
-        "train_gpu": [
-          0,
-          1,
-          2,
-          3
-        ],
-        "eval_gpu": 4,
-        "http_port": 8011,
-        "group_port": 51221
-      }
-    ],
-    "node_qwen9b_sft_native_stabilized_medical_auxiliary": [
-      {
-        "config": "scripts/train/configs/runs/qwen9b_sft_native_stabilized_medical_auxiliary.yaml",
+        "config": "scripts/train/configs/runs/qwen9b_sft_native_stabilized_medical_camera_viewpoint.yaml",
         "train_gpu": [
           0,
           1,
@@ -42,37 +28,9 @@
         "group_port": 51223
       }
     ],
-    "node_gemma12b_sft_stabilized_medical_auxiliary": [
+    "node_gemma12b_sft_native_stabilized_medical_camera_viewpoint": [
       {
-        "config": "scripts/train/configs/runs/gemma12b_sft_stabilized_medical_auxiliary.yaml",
-        "train_gpu": [
-          0,
-          1,
-          2,
-          3
-        ],
-        "eval_gpu": 4,
-        "http_port": 8020,
-        "group_port": 51224
-      }
-    ],
-    "node_gemma12b_sft_native_stabilized_medical": [
-      {
-        "config": "scripts/train/configs/runs/gemma12b_sft_native_stabilized_medical.yaml",
-        "train_gpu": [
-          0,
-          1,
-          2,
-          3
-        ],
-        "eval_gpu": 4,
-        "http_port": 8021,
-        "group_port": 51225
-      }
-    ],
-    "node_gemma12b_sft_native_stabilized_medical_auxiliary": [
-      {
-        "config": "scripts/train/configs/runs/gemma12b_sft_native_stabilized_medical_auxiliary.yaml",
+        "config": "scripts/train/configs/runs/gemma12b_sft_native_stabilized_medical_camera_viewpoint.yaml",
         "train_gpu": [
           0,
           1,
@@ -82,20 +40,6 @@
         "eval_gpu": 4,
         "http_port": 8022,
         "group_port": 51226
-      }
-    ],
-    "node_qwen_stabilized_auxiliary": [
-      {
-        "config": "scripts/train/configs/runs/qwen9b_sft_stabilized_medical_auxiliary.yaml",
-        "train_gpu": [
-          0,
-          1,
-          2,
-          3
-        ],
-        "eval_gpu": 4,
-        "http_port": 8010,
-        "group_port": 51220
       }
     ]
   }
