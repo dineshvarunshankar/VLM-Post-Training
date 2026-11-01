@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from scripts.train.shared.data import atomic_json, sha256
+from scripts.train.shared.config import evaluation_settings
 
 def validate_runtime(args, model_config, recipe="sft_only"):
     import torch
@@ -126,7 +127,7 @@ def save_run_metadata(
                 "Resume configuration, prompts, or split files differ from run.json"
             )
     atomic_json(output / "run.json", run)
-    atomic_json(output / "generation_policy.json", model_config["generation"])
+    atomic_json(output / "generation_policy.json", evaluation_settings(config, model_config)["generation"])
     shutil.copy2(args.catalog, output / "label_catalog.yaml")
     shutil.copy2(args.prompts, output / "prompts.yaml")
     if mixture_report is not None:
