@@ -6,8 +6,10 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
+import uuid
 
 from dotenv import load_dotenv
 from scripts.train.shared.storage_settings import local_dataset_directory, annotation_dataset_directory
@@ -29,6 +31,7 @@ def arguments(argv=None):
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--workers', type=int, default=8, help='Concurrent annotation readers; no video decoding')
     parser.add_argument('--inspect', action='store_true', help='Print the proposed split without writing any files')
+    parser.add_argument('--refresh', action='store_true', help='Replace an existing split after validation; keep identical results unchanged')
     args = parser.parse_args(argv)
     try:
         if args.percentage is None:
@@ -59,22 +62,39 @@ def arguments(argv=None):
         if args.modality == 'IR' and args.catalog == (CONFIG_DIR / 'catalogs/RGB/label_catalog.yaml').resolve():
             parser.error('The RGB catalog cannot be used for IR splits')
         destination = args.split_root / args.date / "answer_only"
-        if not args.inspect and (destination.exists() or destination.is_symlink()):
-            parser.error(f'Answer-only split already exists; choose another date: {destination}')
+        if not args.inspect and not args.refresh and (destination.exists() or destination.is_symlink()):
+            parser.error(f'Answer-only split already exists; use --refresh to replace it or choose another date: {destination}')
     except (ValueError, EOFError) as error:
         parser.error(str(error))
     return args
 
 
-def publish_split(destination, selection, report):
-    """Publish an answer-only split; never replace an existing split."""
-    if destination.exists() or destination.is_symlink():
+SPLIT_FILES = {'train.jsonl', 'validation.jsonl', 'test.jsonl', 'summary.json'}
+
+
+def validate_destination(destination, refresh):
+    if destination.is_symlink():
+        raise ValueError(f'Split destination must not be a symbolic link: {destination}')
+    if not destination.exists():
+        return
+    if not refresh:
         raise ValueError(f'Answer-only split already exists: {destination}')
+    if not destination.is_dir():
+        raise ValueError(f'Split destination must be a directory: {destination}')
+    files = list(destination.iterdir())
+    if {path.name for path in files} != SPLIT_FILES or any(path.is_symlink() or not path.is_file() for path in files):
+        raise ValueError(f'Refresh requires only the four split files; unexpected or missing files in: {destination}')
+
+
+def publish_split(destination, selection, report, *, refresh=False):
+    """Stage a complete split; restore the previous directory if replacement fails."""
+    validate_destination(destination, refresh)
     destination.parent.mkdir(parents=True, exist_ok=True)
     lock = destination.parent / ('.' + destination.name + '.lock')
     fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     os.close(fd)
     try:
+        validate_destination(destination, refresh)
         with tempfile.TemporaryDirectory(prefix='.' + destination.name + '-', dir=destination.parent) as temporary:
             staging = Path(temporary) / 'split'
             staging.mkdir()
@@ -86,9 +106,22 @@ def publish_split(destination, selection, report):
                 (staging / (name + '.jsonl')).write_text(content)
                 split_hashes[name] = hashlib.sha256(content.encode()).hexdigest()
             (staging / 'summary.json').write_text(json.dumps({**report, 'split_sha256': split_hashes}, indent=2, allow_nan=False) + '\n')
-            if destination.exists() or destination.is_symlink():
-                raise ValueError(f'Answer-only split already exists: {destination}')
+            validate_destination(destination, refresh)
+            if destination.exists():
+                if all((destination / name).read_bytes() == (staging / name).read_bytes() for name in SPLIT_FILES):
+                    return 'unchanged'
+                previous = destination.with_name('.' + destination.name + '-rollback-' + uuid.uuid4().hex)
+                destination.rename(previous)
+                try:
+                    staging.rename(destination)
+                except BaseException:
+                    # Keep the rollback directory if restoring it also fails.
+                    previous.rename(destination)
+                    raise
+                shutil.rmtree(previous)
+                return 'replaced'
             staging.rename(destination)
+            return 'created'
     finally:
         lock.unlink()
 
@@ -106,7 +139,8 @@ def main(argv=None):
                                 args.date, args.percentage, args.seed)
         if not args.inspect:
             verify_inputs(inputs, args.workers)
-            publish_split(destination, selection, report)
+            status = publish_split(destination, selection, report, refresh=args.refresh)
+            print(f'Split status: {status}')
         print_report(report, destination, args.inspect)
         return 0
     except (OSError, ValueError, KeyError, TypeError) as error:

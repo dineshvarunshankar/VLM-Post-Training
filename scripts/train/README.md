@@ -90,7 +90,21 @@ Choose your split date. Remove `--inspect` to write:
 
 `--percentage 5` means 5% validation and 5% test, measured in native/stabilized clip pairs.
 The default is 5. Interactive runs ask for omitted percentages and modality. Noninteractive runs require `--modality`.
-Existing split directories are never overwritten. `--split-root` changes the parent directory. The default seed is 42.
+An existing split is protected unless you add `--refresh`. `--split-root` changes the parent directory. The default seed is 42.
+
+To refresh an existing split at the same date path:
+
+```bash
+uv run python scripts/train/create_splits.py \
+  --media-root /path/to/dataset-root --modality RGB \
+  --percentage 5 --date 2026-10-31 --refresh
+```
+
+The script prepares the replacement and verifies its inputs before publishing it.
+Identical split files and summary remain unchanged. Changed results replace the existing split; no archive is retained after success.
+If preparation fails, the existing split remains intact. If replacement fails, the script restores the previous split.
+`--refresh` also creates a split when none exists. With `--inspect`, it previews the proposal without writing files.
+Refresh can change train, validation, and test membership. Refresh before training starts; keep assignments fixed for ongoing comparisons.
 
 The selector:
 
