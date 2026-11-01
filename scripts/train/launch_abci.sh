@@ -30,7 +30,9 @@ runtime="$work/runtime/vlm-post-training"
 [[ -f "$config" && -f "$image" && -x "$venv/bin/python" ]] || { echo 'Run config, container, or project environment is missing.' >&2; exit 2; }
 umask 077
 mkdir -p "$runtime/home" "$runtime/tmp" "$work/cache/huggingface" "$work/cache/torch" "$work/cache/triton"
-tmp="${PBS_LOCALDIR:-$runtime/tmp}/$(basename "$config" .yaml)/$mode"
+# Keep vLLM Unix socket paths below the platform limit for long run names.
+run_tmp_id=$(printf %s "$config" | sha256sum | cut -c1-12)
+tmp="${PBS_LOCALDIR:-$runtime/tmp}/$run_tmp_id/$mode"
 mkdir -p "$tmp"
 export SINGULARITY_TMPDIR="$tmp"
 args=(exec --cleanenv --home "$runtime/home:$runtime/home" -B /groups:/groups)
