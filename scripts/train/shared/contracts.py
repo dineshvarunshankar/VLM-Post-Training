@@ -117,11 +117,22 @@ def validate_experiment(config, *, sft=False):
     keys(config, 'method attention max_length video augmentation lora data_checks evaluation training',
          'experiment', 'recipe effective_batch_size dataset mixture')
     fixed(config['method'], 'lora', 'method')
-    if config['attention'] not in ('sdpa', 'eager', 'flash_attention_2', 'flash_attention_3'):
+    if config['attention'] not in ('sdpa', 'eager', 'flash_attention_2', 'flash_attention_3', 'flex_attention'):
         raise ValueError('Unsupported attention implementation')
     number(config['max_length'], 'max_length', integer=True, strict=True)
     video = config['video']
-    keys(video, 'fps qwen gemma', 'video')
+    keys(video, 'fps qwen gemma', 'video', 'sources')
+    if 'sources' in video:
+        keys(video['sources'], 'native stabilized', 'video.sources')
+        for source, budget in video['sources'].items():
+            where = f'video.sources.{source}'
+            keys(budget, 'fps max_soft_tokens max_pixels_per_frame', where)
+            number(budget['fps'], where + '.fps', strict=True)
+            number(budget['max_pixels_per_frame'], where + '.max_pixels_per_frame', integer=True, strict=True)
+            if type(budget['max_soft_tokens']) is not int or budget['max_soft_tokens'] not in (70, 140, 280, 560, 1120):
+                raise ValueError(where + '.max_soft_tokens is unsupported')
+        if sft and config['training']['per_device_train_batch_size'] != 1:
+            raise ValueError('Per-source video budgets currently require microbatch size 1')
     number(video['fps'], 'video.fps', strict=True)
     keys(video['qwen'], 'max_pixels', 'video.qwen')
     number(video['qwen']['max_pixels'], 'video.qwen.max_pixels', integer=True, strict=True)

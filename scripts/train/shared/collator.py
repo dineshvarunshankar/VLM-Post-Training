@@ -3,13 +3,15 @@
 import math
 
 import torch
-from scripts.train.shared.video import capped_sampling
+from scripts.train.shared.video import capped_sampling, source_video_config, spatial_options, sample_capped_frames
+from transformers.video_utils import VideoMetadata
 
 
 class AnswerOnlyCollator:
-    def __init__(self, processor, fps, max_length, processor_kwargs=None):
+    def __init__(self, processor, fps, max_length, processor_kwargs=None, *, video_config=None):
         if type(fps) not in (int, float) or not math.isfinite(fps) or not 0 < fps:
             raise ValueError("video.fps must be positive")
+        self.video_config = video_config
         self.processor = processor
         self.fps = fps
         self.max_length = max_length
@@ -49,12 +51,27 @@ class AnswerOnlyCollator:
         ]
 
     def prompt_batch(self, examples, *, padding_side="left"):
+        fps, options = self.fps, self.kwargs
+        if self.video_config and self.video_config.get("sources"):
+            if len(examples) != 1:
+                raise ValueError("Per-source video budgets currently require microbatch size 1")
+            row = examples[0]
+            config = source_video_config(self.video_config, row["reference"]["variant"])
+            metadata = row.get("video_metadata")
+            if metadata is None:
+                raise ValueError("Per-source video budgets require annotation video metadata")
+            fps = config["fps"]
+            frames = sample_capped_frames(
+                VideoMetadata(total_num_frames=metadata["n_frames"], fps=metadata["fps"]),
+                fps_cap=fps, required_frames=row.get("required_frame_indices") or (),
+            )
+            options = spatial_options(self.processor, config, sampled_frames=len(frames))
         previous = self.processor.tokenizer.padding_side
         self.processor.tokenizer.padding_side = padding_side
         try:
             with capped_sampling(
                 self.processor,
-                self.fps,
+                fps,
                 [row.get("required_frame_indices") or [] for row in examples],
                 [row.get("video_metadata") for row in examples],
             ):
@@ -66,10 +83,10 @@ class AnswerOnlyCollator:
                     return_dict=True,
                     return_tensors="pt",
                     processor_kwargs={
-                        "fps": self.fps,
+                        "fps": fps,
                         "padding": True,
                         "truncation": False,
-                        **self.kwargs,
+                        **options,
                     },
                 )
         finally:

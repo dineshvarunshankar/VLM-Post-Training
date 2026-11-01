@@ -56,6 +56,7 @@ def build_processor(model_config, config):
         config["video"]["fps"],
         config["max_length"],
         spatial_options(processor, config["video"]),
+        video_config=config["video"],
     )
     return checkpoint_config, processor, collator
 

@@ -1,6 +1,7 @@
 """Training video sampling and model-specific spatial budgets."""
 
 import math
+from copy import deepcopy
 from contextlib import contextmanager
 from functools import partial
 
@@ -33,11 +34,32 @@ def sample_capped_frames(metadata, *, fps_cap, required_frames=(), **kwargs):
     return np.array(sorted(selected), dtype=int)
 
 
-def spatial_options(processor, config):
+def source_video_config(config, source):
+    result = deepcopy(config)
+    budgets = result.pop("sources", None)
+    if budgets is not None:
+        if source not in budgets:
+            raise ValueError(f"No video budget for source {source!r}")
+        selected = budgets[source]
+        result["fps"] = selected["fps"]
+        result["gemma"]["max_soft_tokens"] = selected["max_soft_tokens"]
+        result["qwen"]["max_pixels_per_frame"] = selected["max_pixels_per_frame"]
+    return result
+
+
+def spatial_options(processor, config, *, sampled_frames=None):
     video = processor.video_processor
     if type(video).__name__.startswith("Qwen3VL"):
         size = dict(video.size)
         size["longest_edge"] = config["qwen"]["max_pixels"]
+        per_frame = config["qwen"].get("max_pixels_per_frame")
+        if per_frame is not None:
+            if type(sampled_frames) is not int or sampled_frames < 1:
+                raise ValueError("A per-frame Qwen budget requires the sampled frame count")
+            # Qwen smart_resize compares against the temporally rounded frame count.
+            temporal = getattr(video, "temporal_patch_size", 2)
+            frames = max(temporal, round(sampled_frames / temporal) * temporal)
+            size["longest_edge"] = min(size["longest_edge"], per_frame * frames)
         return {"videos_kwargs": {"size": size, "cap_pixels_per_frame": False}}
     if type(video).__name__.startswith("Gemma4"):
         return {

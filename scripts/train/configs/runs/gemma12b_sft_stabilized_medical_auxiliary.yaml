@@ -69,7 +69,7 @@ mixture:
         temporal_labels_only: true
 shared:
   method: lora
-  attention: sdpa
+  attention: flex_attention
   max_length: 262144
   video:
     fps: 10
@@ -77,6 +77,15 @@ shared:
       max_pixels: 251658240
     gemma:
       max_soft_tokens: 280
+    sources:
+      native:
+        fps: 10
+        max_soft_tokens: 280
+        max_pixels_per_frame: 645120
+      stabilized:
+        fps: 5
+        max_soft_tokens: 140
+        max_pixels_per_frame: 322560
   augmentation:
     enabled: false
     photometric:
@@ -136,7 +145,7 @@ sft:
     adam_epsilon: 1.0e-08
     max_grad_norm: 1.0
     lr_scheduler_type: cosine
-    optim: adamw_torch
+    optim: adamw_torch_fused
     logging_steps: 1
     eval_strategy: epoch
     save_strategy: epoch
