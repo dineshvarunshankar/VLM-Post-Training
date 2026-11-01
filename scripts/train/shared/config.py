@@ -192,10 +192,13 @@ def select_medical_examples(splits, config):
     policy = config["mixture"]["medical_vqa"]
     selected = {}
     for split, rows in splits.items():
+        split_sources = sources
+        if split != "train" and config.get("evaluation", {}).get("sources"):
+            split_sources = {name: name in config["evaluation"]["sources"] for name in sources}
         selected[split] = [
             row
             for row in rows
-            if sources[row["reference"]["variant"]]
+            if split_sources[row["reference"]["variant"]]
             and row["reference"]["category"] not in policy["excluded_categories"]
             and (
                 row["reference"]["category"] != "context"

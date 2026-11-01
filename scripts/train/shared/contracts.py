@@ -137,11 +137,16 @@ def validate_experiment(config, *, sft=False):
     boolean(lora['use_rslora'], 'lora.use_rslora')
     keys(config['data_checks'], 'stabilized_coordinates_verified', 'data_checks')
     boolean(config['data_checks']['stabilized_coordinates_verified'], 'stabilized_coordinates_verified')
-    keys(config['evaluation'], 'max_new_tokens', 'evaluation')
+    keys(config['evaluation'], 'max_new_tokens', 'evaluation', 'sources aggregation request_batch_size')
+    if 'request_batch_size' in config['evaluation']:
+        number(config['evaluation']['request_batch_size'], 'evaluation.request_batch_size', integer=True, strict=True)
+    if 'sources' in config['evaluation'] or 'aggregation' in config['evaluation']:
+        fixed(config['evaluation'].get('sources'), ['native', 'stabilized'], 'evaluation.sources')
+        fixed(config['evaluation'].get('aggregation'), 'equal_source_macro_f1', 'evaluation.aggregation')
     number(config['evaluation']['max_new_tokens'], 'evaluation.max_new_tokens', integer=True, strict=True)
     train = config['training']
     keys(train, 'seed ' + LOADER_FIELDS + (' ' + SFT_FIELDS if sft else ''), 'training',
-         'data_seed per_device_eval_batch_size' if sft else 'data_seed')
+         'data_seed per_device_eval_batch_size gradient_checkpointing' if sft else 'data_seed')
     for key in ('seed', 'data_seed', 'dataloader_num_workers'):
         if key in train and not (key == 'data_seed' and train[key] is None):
             number(train[key], 'training.' + key, integer=True)
@@ -154,6 +159,10 @@ def validate_experiment(config, *, sft=False):
         raise ValueError('Persistent workers require dataloader_num_workers > 0')
     if not sft:
         return
+    if 'gradient_checkpointing' in train:
+        boolean(train['gradient_checkpointing'], 'training.gradient_checkpointing')
+        if train.get('fsdp') and train['gradient_checkpointing']:
+            raise ValueError('FSDP uses fsdp_config.activation_checkpointing instead')
     if 'per_device_eval_batch_size' in train:
         fixed(train['per_device_eval_batch_size'], 1, 'training.per_device_eval_batch_size')
     number(config['effective_batch_size'], 'effective_batch_size', integer=True, strict=True)

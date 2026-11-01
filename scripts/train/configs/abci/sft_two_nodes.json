@@ -1,0 +1,64 @@
+{
+  "nodes": {
+    "node_a": [
+      {
+        "config": "scripts/train/configs/runs/qwen9b_sft_native_stabilized_medical.yaml",
+        "train_gpu": 2,
+        "eval_gpu": 3,
+        "http_port": 8011,
+        "group_port": 51221
+      },
+      {
+        "config": "scripts/train/configs/runs/qwen9b_sft_native_stabilized_medical_auxiliary.yaml",
+        "train_gpu": 4,
+        "eval_gpu": 5,
+        "http_port": 8012,
+        "group_port": 51222
+      },
+      {
+        "config": "scripts/train/configs/runs/gemma12b_sft_stabilized_medical.yaml",
+        "train_gpu": 6,
+        "eval_gpu": 7,
+        "http_port": 8013,
+        "group_port": 51223
+      }
+    ],
+    "node_b": [
+      {
+        "config": "scripts/train/configs/runs/gemma12b_sft_stabilized_medical_auxiliary.yaml",
+        "train_gpu": 0,
+        "eval_gpu": 1,
+        "http_port": 8020,
+        "group_port": 51224
+      },
+      {
+        "config": "scripts/train/configs/runs/gemma12b_sft_native_stabilized_medical.yaml",
+        "train_gpu": 2,
+        "eval_gpu": 3,
+        "http_port": 8021,
+        "group_port": 51225
+      },
+      {
+        "config": "scripts/train/configs/runs/gemma12b_sft_native_stabilized_medical_auxiliary.yaml",
+        "train_gpu": 4,
+        "eval_gpu": 5,
+        "http_port": 8022,
+        "group_port": 51226
+      }
+    ],
+    "node_qwen_stabilized_auxiliary": [
+      {
+        "config": "scripts/train/configs/runs/qwen9b_sft_stabilized_medical_auxiliary.yaml",
+        "train_gpu": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "eval_gpu": 4,
+        "http_port": 8010,
+        "group_port": 51220
+      }
+    ]
+  }
+}

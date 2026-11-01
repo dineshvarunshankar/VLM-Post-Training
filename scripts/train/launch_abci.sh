@@ -6,9 +6,19 @@ if [[ $# -ne 2 || ! "$1" =~ ^(check|server|train)$ ]]; then
   exit 2
 fi
 mode=$1
+train_gpu=${ABCI_TRAIN_GPU:-0}
+eval_gpu=${ABCI_EVAL_GPU:-1}
+[[ "$train_gpu" =~ ^[0-7](,[0-7])*$ && "$eval_gpu" =~ ^[0-7]$ ]] || { echo 'GPU indices must be integers from 0 to 7.' >&2; exit 2; }
+IFS=, read -r -a training_devices <<< "$train_gpu"
+declare -A used_devices=()
+for device in "${training_devices[@]}"; do
+  [[ -z "${used_devices[$device]:-}" ]] || { echo 'Training GPU list contains duplicate indices.' >&2; exit 2; }
+  used_devices[$device]=1
+done
+[[ -z "${used_devices[$eval_gpu]:-}" ]] || { echo 'Training and evaluation GPUs must be distinct.' >&2; exit 2; }
 if [[ "$mode" != check ]]; then
   [[ -n "${PBS_JOBID:-}" ]] || { echo 'A PBS allocation is required.' >&2; exit 2; }
-  [[ "${RTYPE:-}" == rt_HF ]] || { echo 'This two-GPU launcher requires an exclusive rt_HF allocation.' >&2; exit 2; }
+  [[ "${RTYPE:-}" == rt_HF ]] || { echo 'This launcher requires an exclusive rt_HF allocation.' >&2; exit 2; }
   [[ -d "${PBS_LOCALDIR:-}" && -w "$PBS_LOCALDIR" ]] || { echo 'PBS_LOCALDIR must be writable.' >&2; exit 2; }
 fi
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -20,26 +30,28 @@ runtime="$work/runtime/vlm-post-training"
 [[ -f "$config" && -f "$image" && -x "$venv/bin/python" ]] || { echo 'Run config, container, or project environment is missing.' >&2; exit 2; }
 umask 077
 mkdir -p "$runtime/home" "$runtime/tmp" "$work/cache/huggingface" "$work/cache/torch" "$work/cache/triton"
-tmp=${PBS_LOCALDIR:-$runtime/tmp}
+tmp="${PBS_LOCALDIR:-$runtime/tmp}/$(basename "$config" .yaml)/$mode"
+mkdir -p "$tmp"
 export SINGULARITY_TMPDIR="$tmp"
 args=(exec --cleanenv --home "$runtime/home:$runtime/home" -B /groups:/groups)
 [[ -z "${PBS_LOCALDIR:-}" ]] || args+=(-B "$PBS_LOCALDIR:$PBS_LOCALDIR")
 [[ "$mode" == check ]] || args+=(--nv)
 # Pass only operational settings. Credentials are read from the run's project .env.
 exec singularity "${args[@]}" "$image" bash --noprofile --norc -s -- \
- "$mode" "$repo" "$work" "$venv" "$config" "$tmp" "${ABCI_PROFILE_VIDEO_FRAMES:-}" "${ABCI_FFMPEG_BIN:-}" <<'CONTAINER'
+ "$mode" "$repo" "$work" "$venv" "$config" "$tmp" "${ABCI_PROFILE_VIDEO_FRAMES:-}" "${ABCI_FFMPEG_BIN:-}" "$train_gpu" "$eval_gpu" "${ABCI_SERVER_PORT:-}" "${TRIAGE_VLLM_GROUP_PORT:-51216}" <<'CONTAINER'
 set -euo pipefail
-mode=$1; repo=$2; work=$3; venv=$4; config=$5; tmp=$6; frames=$7; ffmpeg_bin=$8
+mode=$1; repo=$2; work=$3; venv=$4; config=$5; tmp=$6; frames=$7; ffmpeg_bin=$8; train_gpu=$9; eval_gpu=${10}; expected_port=${11}
+export TRIAGE_VLLM_GROUP_PORT=${12}
 cd "$repo"
 export PATH="$venv/bin:${ffmpeg_bin:+$ffmpeg_bin:}$PATH"
 export HOME="$work/runtime/vlm-post-training/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 export TMPDIR="$tmp" XDG_CACHE_HOME="$work/cache" HF_HOME="$work/cache/huggingface"
-export TORCH_HOME="$work/cache/torch" TRITON_CACHE_DIR="$work/cache/triton"
+export TORCH_HOME="$work/cache/torch" TRITON_CACHE_DIR="$work/cache/triton/$(basename "$config" .yaml)/$mode"
 export LD_LIBRARY_PATH="${ffmpeg_bin:+$ffmpeg_bin/../lib:}/opt/hpcx/ucx/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false
 unset PYTHONPATH PYTHONHOME WANDB_API_KEY WANDB_BASE_URL
-python - "$config" "$mode" <<'PY'
+python - "$config" "$mode" "$train_gpu" "$eval_gpu" "$expected_port" <<'PY'
 import json, shutil, sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -48,13 +60,19 @@ from scripts.train.shared.run_config import load_run, compile_run
 from scripts.train.run import preflight
 plan = compile_run(load_run(sys.argv[1]))
 c = plan['run']
-if c['recipe'] != 'sft' or c['execution']['training_gpus'] != 1:
-    raise SystemExit('This launcher supports one-GPU SFT with one separate server GPU.')
-if c['execution']['training_devices'] not in (None, [0]):
-    raise SystemExit('Use training_devices: null or [0]; the launcher isolates training on GPU 0.')
+training_devices = [int(index) for index in sys.argv[3].split(',')]
+if c['recipe'] != 'sft' or c['execution']['training_gpus'] != len(training_devices):
+    raise SystemExit('SFT training_gpus must match the assigned training GPU count.')
+if c['execution']['training_devices'] not in (None, training_devices):
+    raise SystemExit('Use training_devices: null or the physical training GPU from the allocation plan.')
 url = urlsplit(c['execution']['vllm_server_url'])
-if url.scheme != 'http' or url.hostname != '127.0.0.1' or url.port != 8000 or url.path not in ('', '/'):
-    raise SystemExit('This launcher requires http://127.0.0.1:8000 for its local server.')
+if url.scheme != 'http' or url.hostname != '127.0.0.1' or not url.port or not 1024 <= url.port <= 65535 or url.path not in ('', '/') or url.query or url.fragment or url.username:
+    raise SystemExit('This launcher requires an unprivileged HTTP port on 127.0.0.1.')
+if sys.argv[5] and url.port != int(sys.argv[5]):
+    raise SystemExit('Run YAML HTTP port differs from the allocation plan.')
+from scripts.train.shared.vllm import weight_transfer_port
+if weight_transfer_port() == url.port:
+    raise SystemExit('HTTP and weight-transfer ports must be distinct.')
 preflight(plan)
 env_path = Path(c['env_file']) if c.get('env_file') else None
 if not env_path or env_path.resolve() != Path('.env').resolve():
@@ -73,20 +91,27 @@ if aux and not shutil.which('ffprobe'):
     raise SystemExit('Auxiliary evaluation needs ffprobe. Set ABCI_FFMPEG_BIN to a project-owned container-compatible installation.')
 if sys.argv[2] != 'check':
     import torch
-    if torch.cuda.device_count() < 2:
-        raise SystemExit('Two allocated GPUs must be visible before applying the device split.')
+    if torch.cuda.device_count() <= max(*training_devices, int(sys.argv[4])):
+        raise SystemExit('Assigned GPU indices are not visible in this allocation.')
 print('Launch preflight passed; GPU memory fit is not established by this check.', flush=True)
 PY
 python scripts/train/patch_vllm.py
+server_port=$(python - "$config" <<'PY'
+import sys
+from urllib.parse import urlsplit
+from scripts.train.shared.run_config import load_run
+print(urlsplit(load_run(sys.argv[1])['execution']['vllm_server_url']).port)
+PY
+)
 if [[ "$mode" == check ]]; then
   python scripts/train/run.py --config "$config" --inspect
 elif [[ "$mode" == train ]]; then
-  python - <<'PY'
-import requests
-response = requests.get('http://127.0.0.1:8000/health', timeout=10)
+  python - "$server_port" <<'PY'
+import requests, sys
+response = requests.get(f'http://127.0.0.1:{sys.argv[1]}/health', timeout=10)
 response.raise_for_status()
 PY
-  export CUDA_VISIBLE_DEVICES=0
+  export CUDA_VISIBLE_DEVICES="$train_gpu"
   exec python scripts/train/run.py --config "$config"
 else
   # Gemma needs a measured maximum frame count; Qwen does not use the frame override.
@@ -108,8 +133,8 @@ PY
   fi
   kwargs=$(python -m scripts.train.rl.rollout.video_profile --run "$config" --profile-video-frames "$frames" --field mm_processor_kwargs)
   limits=$(python -m scripts.train.rl.rollout.video_profile --run "$config" --profile-video-frames "$frames" --field limit_mm_per_prompt)
-  export CUDA_VISIBLE_DEVICES=1 VLLM_SERVER_DEV_MODE=1
-  exec vllm serve "${model[0]}" --served-model-name "${model[1]}" --host 127.0.0.1 --port 8000 \
+  export CUDA_VISIBLE_DEVICES="$eval_gpu" VLLM_SERVER_DEV_MODE=1
+  exec vllm serve "${model[0]}" --served-model-name "${model[1]}" --host 127.0.0.1 --port "$server_port" \
     --dtype bfloat16 --tensor-parallel-size 1 --data-parallel-size 1 --max-num-seqs 1 \
     --gpu-memory-utilization 0.8 --logprobs-mode processed_logprobs --max-model-len "${model[3]}" \
     --enable-scale-out --enable-mm-embeds --video-pruning-rate 0 \

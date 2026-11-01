@@ -16,7 +16,7 @@ paths:
 execution:
   training_gpus: 1
   training_devices: null
-  vllm_server_url: http://127.0.0.1:8000
+  vllm_server_url: http://127.0.0.1:8012
   vllm_model_name: qwen3.5-9b
 dataset:
   modality: RGB
@@ -102,6 +102,8 @@ shared:
     stabilized_coordinates_verified: true
   evaluation:
     max_new_tokens: 1024
+    sources: [native, stabilized]
+    aggregation: equal_source_macro_f1
   seed: 42
   data_loading:
     dataloader_num_workers: 4

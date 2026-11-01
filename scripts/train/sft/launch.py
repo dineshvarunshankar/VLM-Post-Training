@@ -112,12 +112,13 @@ def build_training_config(output, train_args):
 
     train_args = {"report_to": "none", **train_args}
     train_args["per_device_eval_batch_size"] = 1
+    checkpointing = train_args.pop("gradient_checkpointing", not train_args.get("fsdp", False))
     return SFTConfig(
         output_dir=str(output / "checkpoints"),
         remove_unused_columns=False,
         label_names=["labels"],
         bf16=True,
-        gradient_checkpointing=not train_args.get("fsdp", False),
+        gradient_checkpointing=checkpointing,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         ddp_find_unused_parameters=False,
         dataset_kwargs={"skip_prepare_dataset": True},
@@ -178,6 +179,7 @@ def main():
             args.catalog,
             args.prompts,
             sources=config.get("dataset", {}).get("sources"),
+            evaluation_sources=config.get("evaluation", {}).get("sources"),
         ),
         config,
     )

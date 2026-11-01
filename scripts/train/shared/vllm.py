@@ -1,5 +1,15 @@
 """vLLM feature configuration and SFT evaluation weight synchronization."""
 
+import os
+
+
+def weight_transfer_port():
+    port = int(os.environ.get('TRIAGE_VLLM_GROUP_PORT', '51216'))
+    if not 1024 <= port <= 65535:
+        raise ValueError('Weight-transfer port must be between 1024 and 65535')
+    return port
+
+
 def feature_configuration(config, processor):
     kind = config.model_type
     if kind == 'qwen3_5':
@@ -33,7 +43,7 @@ class SFTWeightSync:
             self.generation = VLLMGeneration(
                 model=model, accelerator=trainer.accelerator,
                 processing_class=trainer.processing_class,
-                mode="server", server_base_url=self.server_url,
+                mode="server", server_base_url=self.server_url, group_port=weight_transfer_port(),
             )
             install_policy_weight_export(self.generation)
         self.generation.model = model

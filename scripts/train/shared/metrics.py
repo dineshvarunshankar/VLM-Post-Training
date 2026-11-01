@@ -91,3 +91,25 @@ def score_answers(rows, catalog):
         "categories": categories,
         "predictions": records,
     }
+
+
+def score_medical_evaluation(rows, catalog, policy):
+    """Keep legacy pooled scoring unless a common two-view evaluation is configured."""
+    report = score_answers(rows, catalog)
+    if not policy.get('sources'):
+        return report
+    if policy.get('aggregation') != 'equal_source_macro_f1':
+        raise ValueError('Unsupported medical evaluation aggregation')
+    sources = policy['sources']
+    observed = {row['reference']['variant'] for row in rows}
+    if observed != set(sources):
+        raise ValueError(f'Evaluation sources {observed} do not match required sources {sources}')
+    reports = {}
+    for source in sources:
+        scored = score_answers([row for row in rows if row['reference']['variant'] == source], catalog)
+        reports[source] = {key: scored[key] for key in ('metrics', 'categories')}
+    report['medical_sources'] = reports
+    report['aggregation'] = policy['aggregation']
+    report['metrics']['pooled_macro_f1'] = report['metrics']['macro_f1']
+    report['metrics']['macro_f1'] = sum(r['metrics']['macro_f1'] for r in reports.values()) / len(reports)
+    return report

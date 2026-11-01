@@ -303,12 +303,15 @@ def frozen_split_membership(split_dir, catalog_path):
     return membership
 
 
-def load_splits(root, split_dir, catalog_path, prompts_path, sources=None):
+def load_splits(root, split_dir, catalog_path, prompts_path, sources=None, evaluation_sources=None):
     catalog, templates = read_yaml(catalog_path), read_yaml(prompts_path)
     membership = frozen_split_membership(split_dir, catalog_path)
     rejected = set() if membership is not None else reject_pairs(root)
     cache, result, owners, seen = {}, {}, {}, set()
     for split in ("train", "validation", "test"):
+        split_sources = sources
+        if split != "train" and evaluation_sources is not None:
+            split_sources = {name: name in evaluation_sources for name in DATASETS}
         rows = []
         path = Path(split_dir) / (split + ".jsonl")
         for line in path.read_text().splitlines():
@@ -316,7 +319,7 @@ def load_splits(root, split_dir, catalog_path, prompts_path, sources=None):
                 continue
             ref = json.loads(line)
             variant, clip_id, category = ref["variant"], ref["clip"], ref["category"]
-            if sources is not None and variant in DATASETS and not sources[variant]:
+            if split_sources is not None and variant in DATASETS and not split_sources[variant]:
                 continue
             if not category_enabled(category, variant):
                 raise ValueError(

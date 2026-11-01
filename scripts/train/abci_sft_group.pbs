@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Submit from the repository root, after reviewing configs/abci/sft_two_nodes.json.
+# qsub -v RTYPE=rt_HF,ABCI_SFT_NODE=node_a scripts/train/abci_sft_group.pbs
+# qsub -v RTYPE=rt_HF,ABCI_SFT_NODE=node_b scripts/train/abci_sft_group.pbs
+#PBS -P gai51740
+#PBS -q R9920261300
+#PBS -N triage-sft-group
+#PBS -l select=1
+#PBS -l walltime=168:00:00
+#PBS -j oe
+set -euo pipefail
+: "${ABCI_SFT_NODE:?Set ABCI_SFT_NODE to node_a or node_b}"
+: "${PBS_O_WORKDIR:?Submit from the repository root}"
+cd "$PBS_O_WORKDIR"
+test -f scripts/train/launch_abci_group.py
+exec python3 scripts/train/launch_abci_group.py --node "$ABCI_SFT_NODE" --run

@@ -1,12 +1,13 @@
 """Shared vLLM evaluation with medical-only checkpoint selection."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from accelerate.utils import gather_object
 
 from scripts.train.shared.data import atomic_json
 from scripts.train.shared.decoding import answer_schema
-from scripts.train.shared.metrics import score_answers
+from scripts.train.shared.metrics import score_medical_evaluation
 from scripts.train.shared.auxiliary_evaluation import AuxiliaryEvaluation, score_auxiliary
 from scripts.train.rl.video import prepare_video_prompt
 from scripts.train.rl.rollout.features import encode_video_features
@@ -19,13 +20,40 @@ class MedicalVLLMEvaluator:
         if type(max_tokens) is not int or max_tokens <= 0:
             raise ValueError('evaluation.max_new_tokens must be a positive integer')
         self.max_tokens = max_tokens
+        self.evaluation_policy = (experiment or {}).get("evaluation", {})
+        self.request_batch_size = self.evaluation_policy.get('request_batch_size', 1)
+        if type(self.request_batch_size) is not int or self.request_batch_size < 1:
+            raise ValueError('evaluation.request_batch_size must be a positive integer')
         self.auxiliary = AuxiliaryEvaluation(experiment, medical_templates, catalog)
 
-    def predict(self, trainer, row, version, seed, schema):
+    def encode(self, trainer, row, version):
         packet = prepare_video_prompt(trainer.video_collator, [row])
         if int(packet['attention_mask'].sum()) + self.max_tokens > trainer.video_collator.max_length:
             raise ValueError('Validation prompt and answer exceed the context budget')
         encoded = encode_video_features(packet, policy_version=version, **self.feature_config)
+        return encoded
+
+    def predict(self, trainer, row, version, seed, schema):
+        return self.predict_encoded(self.encode(trainer, row, version), version, seed, schema)
+
+    def predict_many(self, trainer, rows, version, seeds, schemas):
+        if not len(rows) == len(seeds) == len(schemas):
+            raise ValueError('Each evaluation row needs a seed and schema')
+        results = []
+        for start in range(0, len(rows), self.request_batch_size):
+            stop = min(start + self.request_batch_size, len(rows))
+            # Processor/collator access stays serial; only HTTP generation overlaps.
+            packets = [self.encode(trainer, row, version) for row in rows[start:stop]]
+            if len(packets) == 1:
+                results.append(self.predict_encoded(packets[0], version, seeds[start], schemas[start]))
+            else:
+                with ThreadPoolExecutor(max_workers=len(packets)) as pool:
+                    futures = [pool.submit(self.predict_encoded, packet, version, seeds[index], schemas[index])
+                               for index, packet in zip(range(start, stop), packets)]
+                    results.extend(future.result() for future in futures)
+        return results
+
+    def predict_encoded(self, encoded, version, seed, schema):
         settings = self.generation
         output = self.client.generate(
             [encoded], policy_version=version,
@@ -51,20 +79,24 @@ class MedicalVLLMEvaluator:
         version = f'{self.run_id}:{prefix}:step-{trainer.state.global_step}'
         records = []
         rank, world = trainer.accelerator.process_index, trainer.accelerator.num_processes
-        for index in range(rank, len(dataset), world):
-            row = dataset[index]
-            prediction = self.predict(trainer, row, version, trainer.args.seed + index,
-                                      answer_schema(self.catalog['categories'][row['reference']['category']]))
+        indices = list(range(rank, len(dataset), world))
+        rows = [dataset[index] for index in indices]
+        predictions = self.predict_many(trainer, rows, version,
+            [trainer.args.seed + index for index in indices],
+            [answer_schema(self.catalog['categories'][row['reference']['category']]) for row in rows])
+        for index, row, prediction in zip(indices, rows, predictions):
             records.append(dict(index=index, reference=row['reference'], answer=row['answer'], prediction=prediction))
         records = sorted(gather_object(records), key=lambda item: item['index'])
         if [row['index'] for row in records] != list(range(len(dataset))):
             raise ValueError('Every validation example must be evaluated exactly once')
-        report = score_answers(records, self.catalog)
+        report = score_medical_evaluation(records, self.catalog, self.evaluation_policy)
         auxiliary_records = []
-        for index in range(rank, len(auxiliary_rows), world):
-            row = auxiliary_rows[index]
-            prediction = self.predict(trainer, row, version, trainer.args.seed + len(dataset) + index,
-                                      row['reward_context']['schema'])
+        indices = list(range(rank, len(auxiliary_rows), world))
+        rows = [auxiliary_rows[index] for index in indices]
+        predictions = self.predict_many(trainer, rows, version,
+            [trainer.args.seed + len(dataset) + index for index in indices],
+            [row['reward_context']['schema'] for row in rows])
+        for index, row, prediction in zip(indices, rows, predictions):
             auxiliary_records.append(dict(index=index, reference=row['reference'], prediction=prediction,
                                           reward_context=row['reward_context']))
         auxiliary_records = sorted(gather_object(auxiliary_records), key=lambda item: item['index'])
@@ -76,6 +108,9 @@ class MedicalVLLMEvaluator:
         report['split'] = 'test' if prefix == 'test' else 'validation'
         report['decoding'] = dict(self.generation, max_new_tokens=self.max_tokens, constraint='task_json_schema')
         metrics = {f'{prefix}_{key}': value for key, value in report['metrics'].items()}
+        for source, values in report.get('medical_sources', {}).items():
+            for key, value in values['metrics'].items():
+                metrics[f'{prefix}_{source}_{key}'] = value
         for task, values in report['auxiliary']['tasks'].items():
             for key in ('score', 'invalid_rate', 'examples'):
                 metrics[f'{prefix}_aux/{task}/{key}'] = values[key]
