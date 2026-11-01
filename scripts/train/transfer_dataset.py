@@ -256,6 +256,7 @@ def transfer(plan, destination, inspect=False):
         raise ValueError('rsync must be installed on the source and destination machines')
     plan.verify_unchanged()
     if plan.checksums is not None:
+        print('Checking destination paths...', flush=True)
         verify_weights_destination(plan, destination, preflight=True)
     with tempfile.TemporaryDirectory(prefix='triage-transfer-') as temporary:
         listing = Path(temporary) / 'files.list'
@@ -263,18 +264,21 @@ def transfer(plan, destination, inspect=False):
         command = [executable, '-rlt', '--protect-args', '--from0', f'--files-from={listing}',
                    '--partial-dir=.rsync-partial', '--stats', '--human-readable']
         if plan.checksums is not None and not inspect:
-            command.append('--checksum')
+            # Read source data in the copy pass, not a separate checksum scan.
+            # Do not trust equal size/mtime: rsync delta transfer can repair it.
+            command.append('--ignore-times')
         if inspect:
             command.extend(['--dry-run', '--itemize-changes'])
         else:
             command.append('--info=progress2')
         command.extend(['--', str(plan.root) + '/', destination])
+        print('Starting rsync preview...' if inspect else 'Starting rsync transfer...', flush=True)
         result = subprocess.run(command, check=False)
     if result.returncode == 0:
         plan.verify_unchanged()
         if plan.checksums is not None and not inspect:
+            print('Verifying destination SHA-256 checksums...', flush=True)
             verify_weights_destination(plan, destination)
-            check_weight_files(plan.root, plan.checksums)
             plan.verify_unchanged()
     return result.returncode
 
@@ -283,18 +287,32 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     roots = parser.add_mutually_exclusive_group(required=True)
     roots.add_argument('--weights-root', type=Path, help='Verified base weights with repository/model/revision manifests')
+    roots.add_argument('--cloud-source', help='Published swift://container/snapshot-prefix')
     roots.add_argument('--media-root', type=Path, help='Parent of prepared 06, 07, and 08 directories')
     parser.add_argument('--split-dir', type=Path, help='Saved split directory, absolute or relative to media-root')
-    parser.add_argument('--destination', required=True, help='user@host:/absolute/dataset/path or local directory')
+    parser.add_argument('--destination', required=True, help='SSH path, local directory, or swift://container/snapshot-prefix')
+    parser.add_argument('--workers', type=int, default=16, help='Concurrent cloud transfers (default: 16)')
     parser.add_argument('--inspect', action='store_true', help='Compare files and sizes with destination without copying')
     args = parser.parse_args(argv)
     try:
+        cloud_upload = args.destination.startswith('swift://')
+        if args.cloud_source or cloud_upload:
+            from scripts.train.storage.dataset_transfer import download_dataset, upload_dataset, location
+            if not 1 <= args.workers <= 64:
+                parser.error('--workers must be between 1 and 64')
+        if args.cloud_source:
+            if args.split_dir is not None or cloud_upload:
+                parser.error('--cloud-source requires a local destination and no --split-dir')
+            download_dataset(args.cloud_source, args.destination, workers=args.workers, inspect=args.inspect)
+            return 0
         if args.weights_root is not None:
+            if cloud_upload:
+                parser.error('Cloud snapshot upload requires --media-root and --split-dir')
             if args.split_dir is not None:
                 parser.error('--split-dir is only used with --media-root')
             validate_destination(args.destination, args.weights_root.expanduser().resolve())
-            print('Checking weight manifests, paths, and sizes (preview; no content hashing)...' if args.inspect else 'Verifying source weight SHA-256 checksums...', flush=True)
-            plan = prepare_weights(args.weights_root, check_hashes=not args.inspect)
+            print('Checking file list and sizes...', flush=True)
+            plan = prepare_weights(args.weights_root, check_hashes=False)
         else:
             if args.split_dir is None:
                 parser.error('--split-dir is required with --media-root')
@@ -302,18 +320,24 @@ def main(argv=None):
             split = args.split_dir.expanduser()
             if not split.is_absolute():
                 split = root / split
-            validate_destination(args.destination, root)
+            if cloud_upload:
+                location(args.destination)
+            else:
+                validate_destination(args.destination, root)
             print('Checking prepared manifests, clip files, and split...', flush=True)
             plan = prepare_transfer(root, split)
         for variant, count in plan.counts.items():
             print(f'{variant}: {count}' if plan.checksums is not None else f'{variant}: {count} prepared clips', flush=True)
         print(f'{len(plan.files):,} files; {plan.total_bytes / 1024**3:.2f} GiB source size', flush=True)
+        if cloud_upload:
+            upload_dataset(plan, args.destination, workers=args.workers, inspect=args.inspect)
+            return 0
         print('Preview: no files copied.' if args.inspect else 'Copying; existing destination files are not deleted.', flush=True)
         result = transfer(plan, args.destination, args.inspect)
         if result:
             print(f'rsync exited with code {result}; resolve the reported error and rerun the same command.', file=sys.stderr)
         else:
-            print(('Preview complete; weight contents were not checksum-verified.' if plan.checksums is not None else 'Preview complete.') if args.inspect else ('Transfer complete; source and destination SHA-256 checks passed.' if plan.checksums is not None else 'Transfer complete; source metadata remained unchanged.'))
+            print(('Preview complete. Checksums will be verified during transfer.' if plan.checksums is not None else 'Preview complete.') if args.inspect else ('Transfer complete; destination SHA-256 checks passed.' if plan.checksums is not None else 'Transfer complete; source metadata remained unchanged.'))
         return result
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f'Dataset transfer failed: {error}', file=sys.stderr)

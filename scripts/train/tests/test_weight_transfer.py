@@ -114,6 +114,34 @@ class WeightTransferTests(unittest.TestCase):
         self.assertIn('SHA-256', output.getvalue())
         self.assertIn('weights.safetensors', output.getvalue())
 
+    def test_actual_transfer_does_not_hash_source_in_python(self):
+        original = Path.open
+        def guarded(path, *args, **kwargs):
+            if path == self.model / 'weights.safetensors':
+                self.fail('Source must be read by rsync only')
+            return original(path, *args, **kwargs)
+        dest = Path(self.tmp.name) / 'destination'
+        with patch.object(Path, 'open', guarded):
+            rc = transfer.main(['--weights-root', str(self.root), '--destination', str(dest)])
+        self.assertEqual(rc, 0)
+        self.assertEqual((dest / 'org/model/revision/weights.safetensors').read_bytes(), b'weights')
+
+    def test_corrupt_source_cannot_report_transfer_success(self):
+        (self.model / 'weights.safetensors').write_bytes(b'corrupt')
+        dest = Path(self.tmp.name) / 'destination'
+        rc = transfer.main(['--weights-root', str(self.root), '--destination', str(dest)])
+        self.assertEqual(rc, 1)
+
+    def test_real_transfer_avoids_rsync_prechecksum_pass(self):
+        plan = transfer.prepare_weights(self.root, check_hashes=False)
+        with patch.object(transfer.shutil, 'which', return_value='/usr/bin/rsync'), \
+             patch.object(transfer.subprocess, 'run') as run, \
+             patch.object(transfer, 'verify_weights_destination'):
+            run.return_value.returncode = 0
+            transfer.transfer(plan, str(Path(self.tmp.name)/'dest'))
+            self.assertNotIn('--checksum', run.call_args.args[0])
+            self.assertIn('--ignore-times', run.call_args.args[0])
+
     def test_stale_adapter_rejected(self):
         plan = transfer.prepare_weights(self.root)
         (self.model / 'adapter_config.json').write_text('{}')
