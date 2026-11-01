@@ -41,6 +41,17 @@
         "http_port": 8022,
         "group_port": 51226
       }
+    ],
+    "node_qwen9b_sft_stabilized_medical": [
+      {
+        "config": "scripts/train/configs/runs/qwen9b_sft_stabilized_medical.yaml",
+        "train_gpu": [
+          0
+        ],
+        "eval_gpu": 1,
+        "http_port": 8000,
+        "group_port": 51220
+      }
     ]
   }
 }

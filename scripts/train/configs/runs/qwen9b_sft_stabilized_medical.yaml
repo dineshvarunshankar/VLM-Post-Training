@@ -1,7 +1,7 @@
 # ABCI smoke-test starting allocation: 1 training GPU + 1 separate vLLM GPU.
 schema_version: 2
 run:
-  name: qwen9b-stabilized-medical
+  name: qwen9b-stabilized-medical-2
   date: '2026-11-01'
 model: qwen3.5-9b
 answer_format: answer_only
