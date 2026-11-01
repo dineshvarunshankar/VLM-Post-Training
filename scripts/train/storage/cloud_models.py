@@ -14,7 +14,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 from scripts.train.shared.storage_settings import cloud_setting
 
-DEFAULT_SWIFT_URL = "https://airlab-cloud.andrew.cmu.edu:8080/swift/v1/AUTH_0601b6ebfa1a43c18f2d16a9c3364004"
+DEFAULT_SWIFT_URL = "https://airlab-s3.andrew.cmu.edu/swift/v1/AUTH_0601b6ebfa1a43c18f2d16a9c3364004"
 
 
 def safe_relative(value):
