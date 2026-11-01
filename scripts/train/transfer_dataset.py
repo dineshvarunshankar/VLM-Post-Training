@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Preview or copy prepared datasets and a saved split using rsync."""
+"""Preview or copy prepared datasets or verified base weights over rsync/SSH.
+
+Weights: --weights-root PATH --destination SSH_ALIAS:/absolute/base-weights --inspect
+The SSH alias must work from this machine. Both ends need rsync; the remote
+weight verifier also needs python3. Remove --inspect to copy and verify hashes.
+"""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
+import inspect as source_inspect
+import shlex
 import json
 import os
 from pathlib import Path
@@ -36,6 +43,7 @@ class TransferPlan:
     stamps: dict[Path, tuple]
     counts: dict[str, int]
     total_bytes: int
+    checksums: dict | None = None
 
     def verify_unchanged(self):
         def check(item):
@@ -128,6 +136,89 @@ def prepare_transfer(root, split):
                         counts, sum(stamps[path][0] for path in files))
 
 
+def check_weight_files(root, records, preflight=False):
+    """Standalone verifier, also executed over SSH using only Python's standard library."""
+    from pathlib import Path
+    import hashlib
+    root = Path(root)
+    for name in records:
+        if name.endswith('/cloud_source.json'):
+            directory = root / Path(name).parent
+            if directory.is_symlink():
+                raise ValueError(f'Symlink in weight path: {directory}')
+            if directory.exists():
+                for path in directory.rglob('*'):
+                    if path.is_symlink():
+                        raise ValueError(f'Symlink in weight path: {path}')
+                    relative = path.relative_to(root)
+                    if path.is_file() and str(relative) not in records:
+                        if '.rsync-partial' not in relative.parts:
+                            raise ValueError(f'Unexpected model file: {relative}')
+    for name, record in records.items():
+        if not name or name.startswith('/') or any(x in ('', '.', '..') for x in name.split('/')) or '\\' in name:
+            raise ValueError(f'Unsafe weight path: {name}')
+        path = root / name
+        if any(p.is_symlink() for p in (path, *path.parents)):
+            raise ValueError(f'Symlink in weight path: {path}')
+        if preflight:
+            if path.exists() and not path.is_file():
+                raise ValueError(f'Destination is not a regular file: {path}')
+            continue
+        if not path.is_file() or path.stat().st_size != record['bytes']:
+            raise ValueError(f'Weight size mismatch: {name}')
+        digest = hashlib.sha256()
+        with path.open('rb') as stream:
+            for block in iter(lambda: stream.read(8 * 1024 * 1024), b''):
+                digest.update(block)
+        if digest.hexdigest() != record['sha256']:
+            raise ValueError(f'Weight checksum mismatch: {name}')
+
+
+def prepare_weights(root):
+    root = Path(root).expanduser().absolute()
+    if any(p.is_symlink() for p in (root, *root.parents)):
+        raise ValueError('Weight root must not contain symlinks')
+    files, stamps = scan_directory(root)
+    manifests = sorted(root.glob('*/*/*/cloud_source.json'))
+    if not manifests:
+        raise ValueError('No repository/model/revision/cloud_source.json manifests found')
+    records = {}
+    for path in manifests:
+        manifest = json.loads(path.read_text())
+        relative = path.parent.relative_to(root)
+        if '/'.join(relative.parts[:2]) != manifest['repository'] or relative.parts[2] != manifest['revision']:
+            raise ValueError(f'Manifest repository/revision disagrees with directory: {path}')
+        entries = manifest['files']
+        if not entries or 'config.json' not in entries or any(n in entries for n in ('adapter_config.json', 'cloud_source.json')):
+            raise ValueError(f'Incomplete or invalid base-weight manifest: {path}')
+        for name, record in entries.items():
+            if not isinstance(name, str) or not name or name.startswith('/') or any(x in ('', '.', '..') for x in name.split('/')) or '\\' in name:
+                raise ValueError(f'Unsafe manifest file name: {name}')
+            if not isinstance(record['bytes'], int) or record['bytes'] < 0 or not re.fullmatch('[0-9a-f]{64}', record['sha256']):
+                raise ValueError(f'Invalid checksum record: {name}')
+            records[str(relative / name)] = {k: record[k] for k in ('bytes', 'sha256')}
+        records[str(path.relative_to(root))] = {'bytes': path.stat().st_size, 'sha256': digest(path)}
+    if set(records) != {str(p.relative_to(root)) for p in files}:
+        raise ValueError('Weights contain missing or unmanifested files (including partial downloads)')
+    check_weight_files(root, records)
+    plan = TransferPlan(root, sorted(records), stamps, {'models': len(manifests)},
+                        sum(r['bytes'] for r in records.values()), records)
+    plan.verify_unchanged()
+    return plan
+
+
+def verify_weights_destination(plan, destination, preflight=False):
+    if ':' not in destination:
+        check_weight_files(destination, plan.checksums, preflight)
+        return
+    host, root = destination.split(':', 1)
+    code = source_inspect.getsource(check_weight_files) + "\nimport json,sys\np=json.load(sys.stdin)\ncheck_weight_files(**p)\n"
+    command = ['ssh', host, shlex.join(['python3', '-c', code])]
+    result = subprocess.run(command, input=json.dumps(dict(root=root, records=plan.checksums, preflight=preflight)), text=True)
+    if result.returncode:
+        raise ValueError('Remote weight path check or SHA-256 verification failed')
+
+
 def validate_destination(destination, root):
     if ':' in destination:
         if not re.fullmatch(r'(?:[A-Za-z0-9_.-]+@)?[A-Za-z0-9][A-Za-z0-9_.-]*:/[^\n\r\x00]+', destination):
@@ -148,11 +239,15 @@ def transfer(plan, destination, inspect=False):
     if executable is None:
         raise ValueError('rsync must be installed on the source and destination machines')
     plan.verify_unchanged()
+    if plan.checksums is not None:
+        verify_weights_destination(plan, destination, preflight=True)
     with tempfile.TemporaryDirectory(prefix='triage-transfer-') as temporary:
         listing = Path(temporary) / 'files.list'
         listing.write_bytes(b''.join(os.fsencode(path) + b'\0' for path in plan.files))
         command = [executable, '-rlt', '--protect-args', '--from0', f'--files-from={listing}',
                    '--partial-dir=.rsync-partial', '--stats', '--human-readable']
+        if plan.checksums is not None:
+            command.append('--checksum')
         if inspect:
             command.extend(['--dry-run', '--itemize-changes'])
         else:
@@ -161,33 +256,48 @@ def transfer(plan, destination, inspect=False):
         result = subprocess.run(command, check=False)
     if result.returncode == 0:
         plan.verify_unchanged()
+        if plan.checksums is not None and not inspect:
+            verify_weights_destination(plan, destination)
+            check_weight_files(plan.root, plan.checksums)
+            plan.verify_unchanged()
     return result.returncode
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--media-root', type=Path, required=True, help='Parent of prepared 06, 07, and 08 directories')
-    parser.add_argument('--split-dir', type=Path, required=True, help='Saved split directory, absolute or relative to media-root')
+    roots = parser.add_mutually_exclusive_group(required=True)
+    roots.add_argument('--weights-root', type=Path, help='Verified base weights with repository/model/revision manifests')
+    roots.add_argument('--media-root', type=Path, help='Parent of prepared 06, 07, and 08 directories')
+    parser.add_argument('--split-dir', type=Path, help='Saved split directory, absolute or relative to media-root')
     parser.add_argument('--destination', required=True, help='user@host:/absolute/dataset/path or local directory')
     parser.add_argument('--inspect', action='store_true', help='Compare files and sizes with destination without copying')
     args = parser.parse_args(argv)
     try:
-        root = args.media_root.expanduser().resolve()
-        split = args.split_dir.expanduser()
-        if not split.is_absolute():
-            split = root / split
-        validate_destination(args.destination, root)
-        print('Checking prepared manifests, clip files, and split...', flush=True)
-        plan = prepare_transfer(root, split)
+        if args.weights_root is not None:
+            if args.split_dir is not None:
+                parser.error('--split-dir is only used with --media-root')
+            validate_destination(args.destination, args.weights_root.expanduser().resolve())
+            print('Verifying source weight SHA-256 checksums...', flush=True)
+            plan = prepare_weights(args.weights_root)
+        else:
+            if args.split_dir is None:
+                parser.error('--split-dir is required with --media-root')
+            root = args.media_root.expanduser().resolve()
+            split = args.split_dir.expanduser()
+            if not split.is_absolute():
+                split = root / split
+            validate_destination(args.destination, root)
+            print('Checking prepared manifests, clip files, and split...', flush=True)
+            plan = prepare_transfer(root, split)
         for variant, count in plan.counts.items():
-            print(f'{variant}: {count} prepared clips', flush=True)
+            print(f'{variant}: {count}' if plan.checksums is not None else f'{variant}: {count} prepared clips', flush=True)
         print(f'{len(plan.files):,} files; {plan.total_bytes / 1024**3:.2f} GiB source size', flush=True)
         print('Preview: no files copied.' if args.inspect else 'Copying; existing destination files are not deleted.', flush=True)
         result = transfer(plan, args.destination, args.inspect)
         if result:
             print(f'rsync exited with code {result}; resolve the reported error and rerun the same command.', file=sys.stderr)
         else:
-            print('Preview complete.' if args.inspect else 'Transfer complete; source metadata remained unchanged.')
+            print('Preview complete.' if args.inspect else ('Transfer complete; source and destination SHA-256 checks passed.' if plan.checksums is not None else 'Transfer complete; source metadata remained unchanged.'))
         return result
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f'Dataset transfer failed: {error}', file=sys.stderr)
