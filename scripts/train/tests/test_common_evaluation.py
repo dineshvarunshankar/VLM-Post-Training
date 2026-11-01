@@ -55,7 +55,7 @@ class CommonEvaluationTests(unittest.TestCase):
             loaded = []
             def load_clip(path, *args, **kwargs):
                 loaded.append(path.name)
-                return {}, {'categories': {'medical': {'cue': 1}}}, path.name
+                return {'fps': 10, 'n_frames': 100}, {'categories': {'medical': {'cue': 1}}}, path.name
             with patch('scripts.train.shared.data.read_yaml', return_value=CATALOG), \
                  patch('scripts.train.shared.data.frozen_split_membership', return_value=None), \
                  patch('scripts.train.shared.data.reject_pairs', return_value=set()), \
@@ -67,6 +67,9 @@ class CommonEvaluationTests(unittest.TestCase):
                                      sources={'native': False, 'stabilized': True},
                                      evaluation_sources=['native', 'stabilized'])
             self.assertEqual([len(splits[s]) for s in ('train', 'validation', 'test')], [1, 2, 2])
+            for rows in splits.values():
+                for row in rows:
+                    self.assertEqual(row['video_metadata'], {'fps': 10, 'n_frames': 100})
             self.assertNotIn('trainnative', loaded)
             self.assertIn('validationnative', loaded)
 

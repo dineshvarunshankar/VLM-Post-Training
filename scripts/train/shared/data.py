@@ -363,6 +363,7 @@ def load_splits(root, split_dir, catalog_path, prompts_path, sources=None, evalu
                     "answer": json.dumps(answer, separators=(",", ":")),
                     "reference": ref,
                     "video_sha256": video_hash,
+                    "video_metadata": {"fps": meta["fps"], "n_frames": meta["n_frames"]},
                 }
             )
         result[split] = rows
