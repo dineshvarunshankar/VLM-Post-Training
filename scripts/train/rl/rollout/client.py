@@ -33,7 +33,8 @@ class VideoRolloutClient:
         try:
             response = requests.request(
                 method, self.base_url + path, headers=self.headers,
-                timeout=(10, self.timeout), **kwargs,
+                # Requests uses the connection socket timeout while sending large video payloads.
+                timeout=(self.timeout, self.timeout), **kwargs,
             )
             response.raise_for_status()
             result = response.json()

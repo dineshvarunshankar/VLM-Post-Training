@@ -64,7 +64,7 @@ class GroupTests(unittest.TestCase):
         from scripts.train.shared.run_config import load_run, compile_run
         root=Path(__file__).resolve().parents[3]
         plan=validate_plan(json.loads((root/'scripts/train/configs/abci/sft_two_nodes.json').read_text()))
-        self.assertEqual([len(x) for x in plan.values()],[3,3,1])
+        self.assertEqual([len(x) for x in plan.values()],[1]*7)
         seen=[]
         for entries in plan.values():
             for entry in entries:
