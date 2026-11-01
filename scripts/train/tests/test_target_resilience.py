@@ -74,3 +74,21 @@ class TargetResilienceTests(unittest.TestCase):
         meta=dict(META,duration_s=None,n_frames=150,fps=9.965)
         spans,_=temporal_target({'time_spans':[{'start_s':0,'end_s':15.053999}]},meta)
         self.assertEqual(temporal_reward(spans,spans,temporal_duration_limit(meta)),1)
+
+    def test_current_person_subject_types_are_counted(self):
+        from scripts.train.shared.grounding import counting_targets
+        points={'frames':[{'frame':1,'parts':[
+            {'part':'person:1','by':'human','occluded':False,'point':[10,10]},
+            {'part':'person:2','by':'human','occluded':False,'point':[20,20]}]}]}
+        for subject_type in ('casualty','medic'):
+            with self.subTest(subject_type=subject_type):
+                counting={'subject_type':subject_type,'people':[{'id':1,'role':'subject'},{'id':2,'role':'other'}]}
+                self.assertEqual(counting_targets(counting,points,META)[0]['count'],2)
+        counting={'subject_type':'robot','people':[{'id':1,'role':'subject'},{'id':2,'role':'other'}]}
+        self.assertEqual(counting_targets(counting,points,META)[0]['count'],1)
+
+    def test_current_subject_requires_human_frame_visibility(self):
+        from scripts.train.shared.grounding import counting_targets
+        counting={'subject_type':'casualty','people':[{'id':1,'role':'subject'},{'id':2,'role':'other'}]}
+        points={'frames':[{'frame':1,'parts':[{'part':'person:2','by':'human','occluded':False,'point':[20,20]}]}]}
+        self.assertEqual(counting_targets(counting,points,META),[])

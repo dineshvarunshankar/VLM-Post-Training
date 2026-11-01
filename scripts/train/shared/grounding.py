@@ -67,7 +67,7 @@ def counting_targets(counting, points, meta):
         if p["role"] in ("other", "manikin")
         or (
             p["role"] == "subject"
-            and subject_type in ("casualty_human_actor", "casualty_manikin")
+            and subject_type in ("casualty", "medic", "casualty_human_actor", "casualty_manikin")
         )
     }
     if not expected:

@@ -1,5 +1,5 @@
 # ABCI starting allocation: 1 training GPU + 1 separate vLLM GPU.
-# Stabilized spatial readiness remains pending corrected-export verification.
+# Corrected exports and newly selected clips passed coordinate validation.
 schema_version: 2
 run:
   name: qwen9b-stabilized-medical-auxiliary
@@ -97,7 +97,7 @@ shared:
     bias: none
     use_rslora: false
   data_checks:
-    stabilized_coordinates_verified: false
+    stabilized_coordinates_verified: true
   evaluation:
     max_new_tokens: 1024
   seed: 42
