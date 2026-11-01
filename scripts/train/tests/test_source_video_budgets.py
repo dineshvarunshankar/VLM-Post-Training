@@ -66,6 +66,11 @@ class SourceVideoBudgets(unittest.TestCase):
             self.assertEqual(config['video']['sources']['stabilized']['fps'],5)
             self.assertEqual(config['video']['sources']['native']['fps'],5)
             self.assertEqual(config['video']['fps'],5)
+            self.assertEqual(config['video']['gemma']['max_soft_tokens'],140)
+            for source in ('native', 'stabilized'):
+                budget=config['video']['sources'][source]
+                self.assertEqual(budget['max_soft_tokens'],140)
+                self.assertEqual(budget['max_pixels_per_frame'],322560)
             if path.name.startswith('gemma'):
                 self.assertEqual(config['attention'],'flex_attention')
 

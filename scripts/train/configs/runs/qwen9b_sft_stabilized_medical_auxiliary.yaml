@@ -77,12 +77,12 @@ shared:
     qwen:
       max_pixels: 251658240
     gemma:
-      max_soft_tokens: 280
+      max_soft_tokens: 140
     sources:
       native:
         fps: 5
-        max_soft_tokens: 280
-        max_pixels_per_frame: 645120
+        max_soft_tokens: 140
+        max_pixels_per_frame: 322560
       stabilized:
         fps: 5
         max_soft_tokens: 140
