@@ -387,9 +387,10 @@ categories:
         - name: ambulatory_observed
           definition: The subject is walking or actively moving from one location to another under their
             own power.
-        - name: standing_unsupported_observed
-          definition: The subject is standing upright without leaning on any external surface or person,
-            and without any visible mechanical aid bearing weight.
+        - name: standing_observed
+          definition: The subject is standing upright on their feet, with or without support such as leaning against a
+            wall, vehicle, or surface, holding onto an object or another person, or bracing with their hands on their
+            thighs or knees.
         - name: sitting_unsupported_observed
           definition: The subject is sitting upright without leaning on a wall, person, or chair-back;
             without using their own hands for support; and without obvious external structural support
