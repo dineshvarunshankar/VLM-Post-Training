@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import uuid
 from pathlib import Path
 from scripts.train.shared.storage_settings import storage_settings
 from scripts.train.storage.cloud_models import run_destination
@@ -26,7 +27,18 @@ def configure_tracking(args, recipe, output, *, repository=None):
         if not os.environ.get(key):
             os.environ[key] = value
     os.environ['WANDB_MODE'] = mode
-    os.environ['WANDB_RUN_ID'] = hashlib.sha256(name.encode()).hexdigest()[:24]
+    identity = Path(output) / 'tracking' / 'run_id.json'
+    if args.resume:
+        run_id = (json.loads(identity.read_text())['id'] if identity.exists()
+                  else hashlib.sha256(name.encode()).hexdigest()[:24])
+    else:
+        attempt = os.environ.get('TORCHELASTIC_RUN_ID')
+        if not attempt or attempt == 'none':
+            if int(os.environ.get('WORLD_SIZE', '1')) > 1:
+                raise ValueError('Distributed tracking requires a shared TORCHELASTIC_RUN_ID')
+            attempt = uuid.uuid4().hex
+        run_id = hashlib.sha256(f'{name}:{attempt}'.encode()).hexdigest()[:24]
+    os.environ['WANDB_RUN_ID'] = run_id
     os.environ['WANDB_RESUME'] = 'allow' if args.resume else 'never'
     directory = Path(output) / 'tracking'
     os.environ['WANDB_DIR'] = str(directory)
@@ -41,6 +53,9 @@ def add_tracking_metadata(trainer, output):
     # directory earlier can make a delayed rank reject the fresh run as nonempty.
     if trainer.is_world_process_zero():
         (Path(output) / 'tracking').mkdir(parents=True, exist_ok=True)
+        from scripts.train.shared.data import atomic_json
+        atomic_json(Path(output) / 'tracking' / 'run_id.json',
+                    {'id': os.environ['WANDB_RUN_ID']})
     from transformers import TrainerCallback
 
     class RunMetadataCallback(TrainerCallback):
