@@ -68,7 +68,7 @@ class MedicalVLLMEvaluator:
         prediction = self.processor.tokenizer.decode(output['completion_ids'][0], skip_special_tokens=True)
         return prediction
 
-    def __call__(self, trainer, dataset, prefix):
+    def __call__(self, trainer, dataset, prefix, *, additional_metrics=None):
         if dataset is None or not len(dataset):
             raise ValueError('Medical validation cannot be empty')
         started = time.monotonic()
@@ -119,7 +119,12 @@ class MedicalVLLMEvaluator:
         for source, tasks in report['auxiliary']['sources'].items():
             for task, values in tasks.items():
                 metrics[f'{prefix}_aux/{source}/{task}/score'] = values['score']
-        metrics[f'{prefix}_runtime'] = time.monotonic() - started
+        if additional_metrics:
+            metrics.update(additional_metrics)
+            report['metrics']['loss'] = additional_metrics[f'{prefix}_loss']
+            report['loss_scope'] = 'medical answer-only targets; mean per-example loss'
+            report['loss_runtime'] = additional_metrics[f'{prefix}_loss_runtime']
+        metrics[f'{prefix}_runtime'] = time.monotonic() - started + report.get('loss_runtime', 0)
         if trainer.is_world_process_zero():
             atomic_json(Path(trainer.args.output_dir) / f'{prefix}-step-{trainer.state.global_step}.json', report)
         trainer.log(metrics)

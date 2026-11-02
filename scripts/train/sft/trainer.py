@@ -1,5 +1,7 @@
 """TRL SFT with shared vLLM medical checkpoint evaluation."""
 
+import time
+
 from trl import SFTTrainer
 from scripts.train.shared.vllm import SFTWeightSync
 
@@ -34,4 +36,31 @@ class MedicalSFTTrainer(SFTTrainer):
 
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
         dataset = self.eval_dataset if eval_dataset is None else eval_dataset
-        return self.medical_evaluator(self, dataset, metric_key_prefix)
+        if dataset is None or not len(dataset):
+            raise ValueError("Medical validation cannot be empty")
+        # Use Trainer's distributed loss-only loop: retain answer masking,
+        # discard logits, and let Accelerate handle gathering and tail padding.
+        # Calling super().evaluate() would emit an early on_evaluate event
+        # without the medical score needed by checkpoint-selection callbacks.
+        started = time.monotonic()
+        was_training = self.model.training
+        try:
+            output = self.evaluation_loop(
+                self.get_eval_dataloader(dataset),
+                description="Answer-only validation loss",
+                prediction_loss_only=True,
+                ignore_keys=ignore_keys,
+                metric_key_prefix=metric_key_prefix,
+            )
+            loss_key = f"{metric_key_prefix}_loss"
+            if loss_key not in output.metrics:
+                raise RuntimeError("Validation loss pass returned no loss")
+            loss_metrics = {
+                loss_key: output.metrics[loss_key],
+                f"{metric_key_prefix}_loss_runtime": time.monotonic() - started,
+            }
+            return self.medical_evaluator(
+                self, dataset, metric_key_prefix, additional_metrics=loss_metrics
+            )
+        finally:
+            self.model.train(was_training)
