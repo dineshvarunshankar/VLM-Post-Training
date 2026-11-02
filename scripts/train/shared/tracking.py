@@ -16,7 +16,7 @@ def configure_tracking(args, recipe, output, *, repository=None):
     if mode not in {'online', 'offline', 'disabled'}:
         raise ValueError('WANDB_MODE must be online, offline, or disabled')
     name = run_destination('runs', repository or args.model, args.run_date, args.run_name,
-                           answer_format='answer_only', recipe=recipe).removeprefix('runs/')
+                           answer_format=getattr(args,'run_location',{}).get('answer_format','answer_only'), recipe=recipe).removeprefix('runs/')
     if args.resume and hasattr(args, 'run_location') and 'answer_format' not in args.run_location:
         name = f'{args.run_date}/{args.model}/{recipe}/{args.run_name}'
     if mode == 'disabled':

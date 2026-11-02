@@ -51,12 +51,20 @@ def build_processor(model_config, config):
             f"max_length={config['max_length']} exceeds or cannot be checked against checkpoint capacity {context_limit}"
         )
     processor = AutoProcessor.from_pretrained(location, **options)
-    collator = AnswerOnlyCollator(
+    collator_class = AnswerOnlyCollator
+    collator_options = {}
+    if config.get('answer_format')=='cot':
+        from scripts.train.shared.collator import CoTCollator
+        from scripts.train.shared.cot_format import model_family
+        collator_class = CoTCollator
+        collator_options['model_family'] = model_family(checkpoint_config)
+    collator = collator_class(
         processor,
         config["video"]["fps"],
         config["max_length"],
         spatial_options(processor, config["video"]),
         video_config=config["video"],
+        **collator_options,
     )
     return checkpoint_config, processor, collator
 

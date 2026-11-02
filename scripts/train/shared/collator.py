@@ -79,7 +79,7 @@ class AnswerOnlyCollator:
                     [self.messages(row) for row in examples],
                     tokenize=True,
                     add_generation_prompt=True,
-                    enable_thinking=False,
+                    enable_thinking=self.enable_thinking(examples),
                     return_dict=True,
                     return_tensors="pt",
                     processor_kwargs={
@@ -92,52 +92,56 @@ class AnswerOnlyCollator:
         finally:
             self.processor.tokenizer.padding_side = previous
 
-    def __call__(self, examples):
-        suffixes = []
-        for example in examples:
-            messages = self.messages(example)
-            assistant = {
-                "role": "assistant",
-                "content": [{"type": "text", "text": example["answer"]}],
-            }
-            prefix = self.processor.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-            full = self.processor.apply_chat_template(
-                messages + [assistant],
-                tokenize=False,
-                add_generation_prompt=False,
-                enable_thinking=False,
-            )
-            if full.startswith(prefix):
-                suffix = full[len(prefix) :]
+    def enable_thinking(self, examples):
+        return False
+
+    def target_tokens(self, example):
+        messages = self.messages(example)
+        assistant = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": example["answer"]}],
+        }
+        prefix = self.processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        full = self.processor.apply_chat_template(
+            messages + [assistant],
+            tokenize=False,
+            add_generation_prompt=False,
+            enable_thinking=False,
+        )
+        if full.startswith(prefix):
+            suffix = full[len(prefix) :]
+        else:
+            base, found, ending = full.rpartition(example["answer"])
+            # Gemma 4's non-thinking generation prefix includes an empty thought channel.
+            # Keep that fixed prefix masked; supervise only the JSON and native turn ending.
+            if (
+                self.processor.__class__.__name__.startswith("Gemma4")
+                and found
+                and prefix == base + "<|channel>thought\n<channel|>"
+            ):
+                suffix = example["answer"] + ending
             else:
-                base, found, ending = full.rpartition(example["answer"])
-                # Gemma 4's non-thinking generation prefix includes an empty thought channel.
-                # Keep that fixed prefix masked; supervise only the JSON and native turn ending.
-                if (
-                    self.processor.__class__.__name__.startswith("Gemma4")
-                    and found
-                    and prefix == base + "<|channel>thought\n<channel|>"
-                ):
-                    suffix = example["answer"] + ending
-                else:
-                    raise ValueError(
-                        "Native assistant boundary is unsupported; refusing to guess the answer mask"
-                    )
-            if not suffix.startswith(example["answer"]):
                 raise ValueError(
-                    "Native template inserts content before the final answer; refusing to supervise hidden reasoning"
+                    "Native assistant boundary is unsupported; refusing to guess the answer mask"
                 )
-            target = self.processor.tokenizer(suffix, add_special_tokens=False)[
-                "input_ids"
-            ]
-            if not target:
-                raise ValueError("Empty assistant target")
-            suffixes.append(target)
+        if not suffix.startswith(example["answer"]):
+            raise ValueError(
+                "Native template inserts content before the final answer; refusing to supervise hidden reasoning"
+            )
+        target = self.processor.tokenizer(suffix, add_special_tokens=False)[
+            "input_ids"
+        ]
+        if not target:
+            raise ValueError("Empty assistant target")
+        return target
+
+    def __call__(self, examples):
+        suffixes = [self.target_tokens(example) for example in examples]
         # Decode each video once; the processor retains model-specific frame/timestamp handling.
         batch = self.prompt_batch(examples, padding_side="right")
         input_ids, attention = batch["input_ids"], batch["attention_mask"]
@@ -179,4 +183,35 @@ class AnswerOnlyCollator:
             labels=labels,
             **typed,
         )
+        return batch
+
+
+class CoTCollator(AnswerOnlyCollator):
+    """Supervise native reasoning/final channels or direct targets by task."""
+    answer_format = "cot"
+    def __init__(self, *args, model_family, **kwargs):
+        super().__init__(*args, **kwargs)
+        from scripts.train.shared.cot_format import FORMATS
+        if model_family not in FORMATS:
+            raise ValueError(f"Unsupported CoT model family: {model_family}")
+        self.model_family = model_family
+
+    def enable_thinking(self, examples):
+        thinking = {row["task"] == "medical_vqa" for row in examples}
+        if len(thinking) != 1:
+            raise ValueError("Mixed thinking modes require microbatch size 1")
+        return thinking.pop()
+
+    def target_tokens(self, example):
+        from scripts.train.shared.cot_format import assistant_suffix
+        _, suffix = assistant_suffix(self.processor, example, family=self.model_family)
+        target = self.processor.tokenizer(suffix, add_special_tokens=False)["input_ids"]
+        if not target:
+            raise ValueError("Empty assistant target")
+        return target
+
+    def __call__(self, examples):
+        from scripts.train.shared.cot_format import TASK_IDS
+        batch = super().__call__(examples)
+        batch["cot_task_ids"] = torch.tensor([TASK_IDS[row["task"]] for row in examples])
         return batch

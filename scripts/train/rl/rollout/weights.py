@@ -6,6 +6,7 @@ import torch
 from peft import PeftModel
 from peft.tuners.lora.layer import Linear, LoraLayer
 from torch.distributed.tensor import DTensor
+from torch.distributed.fsdp import FSDPModule
 
 
 def _full_tensor(parameter):
@@ -47,6 +48,12 @@ def iter_policy_weights(model):
         raise ValueError('Expected a PEFT LoRA policy')
     if any(config.modules_to_save for config in model.peft_config.values()):
         raise ValueError('modules_to_save is not supported by this weight exporter')
+    # A no-grad forward may leave BF16 compute parameters registered, especially
+    # at the FSDP2 root. Restore sharded master parameters before reading LoRA
+    # weights: casting the compute copies would lose the original FP32 values.
+    for module in model.modules():
+        if isinstance(module, FSDPModule):
+            module.reshard()
     layers = {}
     for name, layer in model.named_modules():
         if not isinstance(layer, LoraLayer):
@@ -79,7 +86,10 @@ def iter_policy_weights(model):
             a = _full_tensor(layer.lora_A[adapter].weight)
             b = _full_tensor(layer.lora_B[adapter].weight)
             if value.dtype != torch.bfloat16 or a.dtype != torch.float32 or b.dtype != torch.float32:
-                raise ValueError('Expected BF16 base weights and FP32 LoRA adapters')
+                raise ValueError(
+                    f'Expected BF16 base weights and FP32 LoRA adapters: {name}; '
+                    f'base={value.dtype}, A={a.dtype}, B={b.dtype}'
+                )
             value = torch.addmm(
                 value.float(), b, a, alpha=float(layer.scaling[adapter])
             ).to(value.dtype)

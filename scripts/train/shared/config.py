@@ -34,6 +34,7 @@ def load_training_config(path, _parents=()):
         )
     validate_augmentation(config)
     validate_mixture(config)
+    validate_cot_config(config)
     if 'method' in config:
         from scripts.train.shared.contracts import validate_experiment
         validate_experiment(config, sft=config.get('recipe') == 'sft_only')
@@ -212,11 +213,6 @@ def select_medical_examples(splits, config):
     return selected
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True)
-    args = parser.parse_args()
-    print(yaml.safe_dump(load_training_config(args.config), sort_keys=False))
 
 
 def evaluation_settings(config, model_profile):
@@ -247,3 +243,53 @@ def validate_grounding_readiness(config):
             "Verify subject and evidence coordinates against the corrected stabilized frames first; "
             "otherwise disable the affected tasks or stabilized source."
         )
+
+
+def validate_cot_config(config):
+    """Keep CoT an explicit three-task SFT recipe with positive budgets."""
+    answer_format = config.get("answer_format", "answer_only")
+    if answer_format not in ("answer_only", "cot"):
+        raise ValueError("answer_format must be answer_only or cot")
+    if answer_format != "cot":
+        if "cot" in config:
+            raise ValueError("cot settings require answer_format: cot")
+        return
+    if config.get("recipe") not in (None, "sft_only"):
+        raise ValueError("CoT currently supports SFT only")
+    settings = config.get("cot")
+    from scripts.train.shared.contracts import keys, number
+    keys(settings, "medical_max_new_tokens thinking_token_budget caption_max_new_tokens caption_review_samples accepted_implementation_fingerprints release_manifest release_manifest_sha256", "cot")
+    for name in ("medical_max_new_tokens", "caption_max_new_tokens", "caption_review_samples"):
+        number(settings[name], "cot." + name, strict=True, integer=True)
+    from scripts.train.shared.cot_budget import validate_budget
+    validate_budget(settings)
+    pins = settings["accepted_implementation_fingerprints"]
+    if not isinstance(pins, list) or any(not isinstance(value, str) or len(value)!=64 or any(c not in "0123456789abcdef" for c in value) for value in pins):
+        raise ValueError("CoT accepted implementation fingerprints must be SHA256 strings")
+    path, digest = settings["release_manifest"], settings["release_manifest_sha256"]
+    if (path is None) != (digest is None):
+        raise ValueError("CoT release manifest path and SHA256 must be supplied together")
+    if path is not None and (not isinstance(path,str) or not Path(path).is_absolute() or not isinstance(digest,str) or len(digest)!=64 or any(c not in "0123456789abcdef" for c in digest)):
+        raise ValueError("CoT release manifest requires an explicit absolute path and SHA256")
+    if config.get("augmentation",{}).get("enabled") or config.get("augmentation",{}).get("horizontal_flip",{}).get("enabled"):
+        raise ValueError("CoT geometric augmentation must remain disabled")
+    if config.get("training",{}).get("per_device_train_batch_size",1) != 1:
+        raise ValueError("CoT task-specific thinking currently requires microbatch size 1")
+    mixture = config.get("mixture")
+    if not mixture:
+        return
+    if any(mixture[name]["enabled"] for name in ("counting", "subject_localization", "label_questions")):
+        raise ValueError("CoT supports medical VQA, scene descriptions, and native camera only")
+    medical = mixture["medical_vqa"]
+    if not medical["enabled"] or medical["excluded_categories"] != ["subject_check"] or medical["context_sources"] != ["native"]:
+        raise ValueError("CoT must retain all supported medical categories")
+    camera = mixture["camera_view"]
+    if camera["sources"] != ["native"] or camera["questions_per_video_per_epoch"] != 1:
+        raise ValueError("CoT camera viewpoint must use one direct native-only target per video")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, required=True)
+    args = parser.parse_args()
+    print(yaml.safe_dump(load_training_config(args.config), sort_keys=False))

@@ -77,7 +77,9 @@ def experiment_config(c):
             raise ValueError('sft must contain a complete sft_only recipe without extends')
         return experiment
     shared = deepcopy(c['shared'])
-    fields(shared, SHARED_FIELDS, 'shared')
+    fields(shared, SHARED_FIELDS + (' cot' if c['answer_format']=='cot' else ''), 'shared')
+    if c['answer_format']=='cot':
+        shared['answer_format']='cot'
     data_loading = shared.pop('data_loading')
     fields(data_loading, DATA_LOADING_FIELDS, 'shared.data_loading')
     seed = shared.pop('seed')
@@ -118,10 +120,14 @@ def load_run(path):
 def compile_run(config):
     """Pure configuration validation. Does not open datasets or load credentials/models."""
     reject_secrets(config)
+    if config.get('answer_format')=='cot' and config.get('recipe')!='sft':
+        raise ValueError('CoT currently supports SFT only')
     validate_run_fields(config)
     c = resolve_catalogs(config)
-    if c['answer_format'] != 'answer_only':
-        raise ValueError('Only answer_only is implemented')
+    if c['answer_format'] not in ('answer_only','cot'):
+        raise ValueError('answer_format must be answer_only or cot')
+    if c['answer_format']=='cot' and c['schema_version']!=2:
+        raise ValueError('CoT requires schema_version 2 SFT')
     if c['recipe'] not in ('sft', 'rl_only', 'sft_then_rl'):
         raise ValueError('recipe must be sft, rl_only, or sft_then_rl')
     fields(c['run'], 'name date', 'run')
@@ -140,7 +146,14 @@ def compile_run(config):
     for key in ('entity', 'project'):
         if not isinstance(c['wandb'][key], str) or not c['wandb'][key].strip():
             raise ValueError(f'wandb.{key} must be a nonempty string')
-    fields(c['execution'], 'training_gpus training_devices vllm_server_url vllm_model_name', 'execution')
+    execution_fields = 'training_gpus training_devices vllm_server_url vllm_model_name'
+    if 'vllm_gpu_sharing' in c['execution']:
+        execution_fields += ' vllm_gpu_sharing'
+        if type(c['execution']['vllm_gpu_sharing']) is not bool:
+            raise ValueError('execution.vllm_gpu_sharing must be true or false')
+        if c['execution']['vllm_gpu_sharing'] and c['recipe'] != 'sft':
+            raise ValueError('execution.vllm_gpu_sharing currently supports SFT only')
+    fields(c['execution'], execution_fields, 'execution')
     gpus = c['execution']['training_gpus']
     if type(gpus) is not int or gpus < 1:
         raise ValueError('execution.training_gpus must be a positive integer')
@@ -176,6 +189,8 @@ def compile_run(config):
             inactive_tasks.append(name)
     validate_mixture(experiment)
     validate_augmentation(experiment)
+    from scripts.train.shared.config import validate_cot_config
+    validate_cot_config(experiment)
     profile = c['model_settings']
     if not isinstance(c['model'], str) or not c['model']:
         raise ValueError('model must be a nonempty model identifier')

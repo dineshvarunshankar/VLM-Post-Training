@@ -128,9 +128,12 @@ print(Path(c['paths']['weights_root']) / c['model_settings']['repository'] / c['
 print(c['execution']['vllm_model_name'])
 print(c['model'])
 print(c['shared']['max_length'])
+from scripts.train.shared.cot_budget import server_arguments
+for argument in server_arguments(c):
+    print(argument)
 PY
 )
-  server_args=()
+  server_args=("${model[@]:4}")
   if [[ "${model[2]}" == gemma* ]]; then
     # Gemma graph replay fails after live weight transfer on the current vLLM build.
     server_args+=(--enforce-eager)

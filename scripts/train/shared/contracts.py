@@ -115,7 +115,9 @@ SFT_FIELDS = ('fsdp fsdp_config num_train_epochs learning_rate per_device_train_
 def validate_experiment(config, *, sft=False):
     """Validate the flattened experiment used by both direct and run-YAML entry points."""
     keys(config, 'method attention max_length video augmentation lora data_checks evaluation training',
-         'experiment', 'recipe effective_batch_size dataset mixture')
+         'experiment', 'recipe effective_batch_size dataset mixture answer_format cot')
+    from scripts.train.shared.config import validate_cot_config
+    validate_cot_config(config)
     fixed(config['method'], 'lora', 'method')
     if config['attention'] not in ('sdpa', 'eager', 'flash_attention_2', 'flash_attention_3', 'flex_attention'):
         raise ValueError('Unsupported attention implementation')

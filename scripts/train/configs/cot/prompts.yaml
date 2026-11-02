@@ -1,0 +1,9 @@
+medical_instruction: >-
+  Explain the visible observations and apply the category assessment rules.
+  Keep valid spatial or temporal evidence references when appropriate.
+  After your reasoning, return exactly one final JSON object with the required label keys.
+caption_system: >-
+  Describe the visible scene accurately. Use plain text and describe only details supported by the video.
+caption_question: >-
+  Describe the scene, the designated subject, surrounding people and objects, and visible actions or changes over time.
+  Give the description directly.

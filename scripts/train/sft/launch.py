@@ -68,6 +68,8 @@ def parse_args():
     )
     parser.add_argument("--checkpoint", help="Verified local AirLab model directory")
     parser.add_argument("--vllm-server-url", default=os.environ.get("VLLM_SERVER_URL"))
+    parser.add_argument("--vllm-gpu-sharing", action="store_true",
+                        help="Sleep the evaluation server while training on its GPUs")
     parser.add_argument("--vllm-model-name", default=os.environ.get("VLLM_MODEL_NAME"))
     parser.add_argument("--revision", help="Revision for an overridden checkpoint")
     parser.add_argument(
@@ -153,25 +155,7 @@ def save_training_outputs(trainer, processor, output, result, test_dataset=None)
     finish_training_and_export(trainer, output)
 
 
-def main():
-    from dotenv import load_dotenv
-
-    if not os.environ.get("TRIAGE_RUN_CONFIG"):
-        load_dotenv(REPO_ROOT / ".env")
-    args = parse_args()
-    config = load_training_config(args.config)
-    from scripts.train.shared.config import validate_grounding_readiness
-    validate_grounding_readiness(config)
-    if config.get("recipe") != "sft_only":
-        raise ValueError("train_sft.py requires an sft_only configuration")
-    if config["method"] != "lora":
-        raise ValueError("This training script supports LoRA only")
-    train_args = resolve_training_args(config, int(os.environ.get("WORLD_SIZE", "1")))
-    if args.max_steps is not None:
-        if args.max_steps <= 0:
-            raise ValueError("--max-steps must be positive")
-        train_args["max_steps"] = args.max_steps
-    model_config = load_model_config(args)
+def _prepare_sft_data(args, config):
     splits = select_medical_examples(
         load_splits(
             args.media_root,
@@ -184,6 +168,12 @@ def main():
         config,
     )
     sampling_plan, mixture_report = None, None
+    if config.get("answer_format") == "cot":
+        from scripts.train.shared.cot_data import build_cot_splits, pin_split_membership
+        splits, report = build_cot_splits(splits, media_root=args.media_root,
+            catalog=read_yaml(args.catalog), config=config)
+        pin_split_membership(report,args.split_dir)
+        return splits, report["sampling_plan"], report
     if "mixture" in config:
         from scripts.train.shared.auxiliary import build_mixture
 
@@ -208,6 +198,48 @@ def main():
                 indent=2,
             )
         )
+    return splits, sampling_plan, mixture_report
+
+
+def prepare_sft_data(args, config):
+    """Resolve the actual launcher data route; stream/hash CoT sources on rank zero."""
+    if config.get("answer_format") != "cot" or int(os.environ.get("WORLD_SIZE", "1")) == 1:
+        return _prepare_sft_data(args, config)
+    from accelerate import PartialState
+    from accelerate.utils import broadcast_object_list
+    state = PartialState()
+    payload = [None]
+    if state.is_main_process:
+        try:
+            payload[0] = {"data": _prepare_sft_data(args, config)}
+        except Exception as error:
+            payload[0] = {"error": f"{type(error).__name__}: {error}"}
+    broadcast_object_list(payload)
+    if "error" in payload[0]:
+        raise ValueError("CoT rank-zero data validation failed: " + payload[0]["error"])
+    return payload[0]["data"]
+
+
+def main():
+    from dotenv import load_dotenv
+
+    if not os.environ.get("TRIAGE_RUN_CONFIG"):
+        load_dotenv(REPO_ROOT / ".env")
+    args = parse_args()
+    config = load_training_config(args.config)
+    from scripts.train.shared.config import validate_grounding_readiness
+    validate_grounding_readiness(config)
+    if config.get("recipe") != "sft_only":
+        raise ValueError("train_sft.py requires an sft_only configuration")
+    if config["method"] != "lora":
+        raise ValueError("This training script supports LoRA only")
+    train_args = resolve_training_args(config, int(os.environ.get("WORLD_SIZE", "1")))
+    if args.max_steps is not None:
+        if args.max_steps <= 0:
+            raise ValueError("--max-steps must be positive")
+        train_args["max_steps"] = args.max_steps
+    model_config = load_model_config(args)
+    splits, sampling_plan, mixture_report = prepare_sft_data(args, config)
     print(
         json.dumps(
             {"model": model_config, "examples": {k: len(v) for k, v in splits.items()}},
@@ -215,8 +247,17 @@ def main():
         )
     )
     if args.inspect:
-        print(json.dumps(splits["train"][0], indent=2))
+        if config.get("answer_format") == "cot":
+            print(json.dumps({"coverage":mixture_report,"example":splits["train"][0],
+                              "rendering":"Use python -m scripts.train.shared.cot_inspect with explicit run, split, and processor metadata paths for rendered inputs/targets."},indent=2))
+        else:
+            print(json.dumps(splits["train"][0], indent=2))
         return 0
+    if config.get("answer_format") == "cot":
+        from scripts.train.shared.cot_data import require_complete_training, verify_release_manifest
+        require_complete_training(mixture_report)
+        if not args.check_batch:
+            verify_release_manifest(config, mixture_report)
 
     from datasets import Dataset
     from scripts.train.sft.trainer import MedicalSFTTrainer
@@ -236,7 +277,18 @@ def main():
     client = VideoRolloutClient(args.vllm_server_url, args.vllm_model_name,
                                api_key=os.environ.get("VLLM_API_KEY"))
     client.check_compatibility()
-    output = validate_runtime(args, model_config)
+    if config.get('answer_format')=='cot':
+        from scripts.train.shared.cot_budget import PARSERS
+        from scripts.train.shared.cot_format import model_family
+        client.check_thinking_budget_compatibility(PARSERS[model_family(checkpoint_config)])
+    output = validate_runtime(args, model_config, answer_format=config.get("answer_format","answer_only"))
+    evaluation_lifecycle = None
+    if args.vllm_gpu_sharing:
+        from accelerate import PartialState
+        from scripts.train.shared.eval_lifecycle import SharedEvaluationServer
+        evaluation_lifecycle = SharedEvaluationServer(client, PartialState())
+        # Distributed state is ready; no model weights have been loaded yet.
+        evaluation_lifecycle.initialize()
     from scripts.train.shared.tracking import configure_tracking, add_tracking_metadata
     train_args.update(configure_tracking(args, "sft_only", output, repository=model_config["repository"]))
     model, adapter_summary = load_lora_model(model_config, checkpoint_config, config)
@@ -245,12 +297,21 @@ def main():
     from scripts.train.shared.config import evaluation_settings
 
     evaluation = evaluation_settings(config, model_config)
-    evaluator = MedicalVLLMEvaluator(
+    evaluator_class = MedicalVLLMEvaluator
+    evaluator_options = {}
+    if config.get("answer_format") == "cot":
+        from scripts.train.shared.cot_evaluation import CoTVLLMEvaluator
+        from scripts.train.shared.cot_format import model_family
+        evaluator_class = CoTVLLMEvaluator
+        evaluator_options.update(model_family=model_family(checkpoint_config),coverage_report=mixture_report)
+    evaluator = evaluator_class(
         client, feature_configuration(checkpoint_config, processor), processor,
         read_yaml(args.catalog), evaluation["generation"],
         f"{args.run_date}:{args.model}:{args.run_name}",
         max_tokens=evaluation["max_new_tokens"],
         experiment=config, medical_templates=read_yaml(args.prompts),
+        lifecycle=evaluation_lifecycle,
+        **evaluator_options,
     )
     trainer = MedicalSFTTrainer(
         model=model,

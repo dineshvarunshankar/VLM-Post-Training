@@ -63,8 +63,33 @@ class VideoRolloutClient:
             raise ValueError('Requested model is not advertised by the rollout server')
         self._checked = True
 
+    def check_thinking_budget_compatibility(self, reasoning_parser):
+        """Require initialized native reasoning markers; never assume server setup."""
+        if reasoning_parser not in ('qwen3','gemma4'):
+            raise ValueError('Unsupported CoT reasoning parser')
+        if reasoning_parser in getattr(self, '_checked_reasoning_parsers', set()):
+            return
+        try:
+            info = self._request('GET','/server_info',params={'config_format':'json'})
+            reasoning = info.get('vllm_config',{}).get('reasoning_config') or {}
+            start, end = reasoning.get('_reasoning_start_token_ids'), reasoning.get('_reasoning_end_token_ids')
+            native_start, native_end = {'qwen3':('<think>','</think>'),
+                                        'gemma4':('<|channel>','<channel|>')}[reasoning_parser]
+            ready = (reasoning.get('reasoning_parser')==reasoning_parser
+                     and reasoning.get('reasoning_start_str','') in ('',native_start)
+                     and reasoning.get('reasoning_end_str','') in ('',native_end)
+                     and reasoning.get('_enabled') is True
+                     and isinstance(start,list) and bool(start) and isinstance(end,list) and bool(end)
+                     and all(type(token) is int and token>=0 for token in start+end))
+        except (RuntimeError,AttributeError,TypeError):
+            ready = False
+        if not ready:
+            raise ValueError(f'CoT thinking budget requires an initialized server parser. Start the compatible vLLM server with --reasoning-parser {reasoning_parser} and expose /server_info?config_format=json before training; the existing PSC launcher may require this explicit flag. Remove conflicting --reasoning-config marker overrides.')
+        self._checked_reasoning_parsers = getattr(self, '_checked_reasoning_parsers', set()) | {reasoning_parser}
+
     def generate(self, packets, *, policy_version, temperature, top_p, top_k,
-                 repetition_penalty, max_tokens, schemas=None, presence_penalty=0.0, min_p=0.0, seed=None):
+                 repetition_penalty, max_tokens, schemas=None, presence_penalty=0.0, min_p=0.0, seed=None,
+                 thinking_token_budget=None, reasoning_parser=None):
         """Return one response per entry, grouping shared packets into n-way requests.
 
         policy_version is set by the weight-synchronization caller. Its cache salt
@@ -84,6 +109,10 @@ class VideoRolloutClient:
             raise ValueError('Invalid top_p or top_k')
         if type(max_tokens) is not int or max_tokens < 1:
             raise ValueError('max_tokens must be a positive integer')
+        if thinking_token_budget is not None:
+            if type(thinking_token_budget) is not int or not 0 <= thinking_token_budget < max_tokens:
+                raise ValueError('thinking_token_budget must be a non-negative integer below max_tokens')
+            self.check_thinking_budget_compatibility(reasoning_parser)
         if schemas is not None and len(schemas) != len(packets):
             raise ValueError('Each constrained request needs its own answer schema')
         if type(presence_penalty) not in (int, float) or not math.isfinite(presence_penalty):
@@ -108,6 +137,8 @@ class VideoRolloutClient:
                 'max_tokens': max_tokens, 'logprobs': 0, 'detokenize': False,
                 'output_kind': 2,  # FINAL_ONLY preserves every response for n > 1.
             }
+            if thinking_token_budget is not None:
+                sampling['thinking_token_budget'] = thinking_token_budget
             sampling['presence_penalty'] = presence_penalty
             if schemas is not None:
                 sampling['structured_outputs'] = {'json': schemas[indices[0]]}
@@ -139,16 +170,17 @@ class VideoRolloutClient:
                     {**response, 'choices': [indexed[choice_index]]},
                     packet['token_ids'], max_tokens=max_tokens,
                 )
-                parsed.append((batch_index, packet['token_ids'], completion, logps))
+                parsed.append((batch_index, packet['token_ids'], completion, logps, indexed[choice_index]['finish_reason']))
             return parsed
 
         ordered = [None] * len(packets)
         with ThreadPoolExecutor(max_workers=min(self.max_concurrent_requests, len(groups))) as pool:
             for responses in pool.map(send, groups.values()):
-                for index, prompt, completion, logps in responses:
-                    ordered[index] = (prompt, completion, logps)
+                for index, prompt, completion, logps, finish_reason in responses:
+                    ordered[index] = (prompt, completion, logps, finish_reason)
         return {
             'prompt_ids': [row[0] for row in ordered],
             'completion_ids': [row[1] for row in ordered],
             'logprobs': [row[2] for row in ordered],
+            'finish_reasons': [row[3] for row in ordered],
         }

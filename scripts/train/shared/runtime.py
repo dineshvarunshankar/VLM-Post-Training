@@ -9,7 +9,30 @@ from pathlib import Path
 from scripts.train.shared.data import atomic_json, sha256
 from scripts.train.shared.config import evaluation_settings
 
-def validate_runtime(args, model_config, recipe="sft_only"):
+def validate_output_directory(output, resume):
+    """Share one output decision before any rank can create run artifacts."""
+    import torch.distributed as distributed
+
+    collective = distributed.is_available() and distributed.is_initialized()
+    error = None
+    if not collective or distributed.get_rank() == 0:
+        try:
+            if output.exists() and any(output.iterdir()) and not resume:
+                error = "Output directory is nonempty; choose a new directory or use --resume"
+            elif resume and not (resume / "trainer_state.json").is_file():
+                error = "--resume must point to a Trainer checkpoint containing trainer_state.json"
+        except OSError as exc:
+            error = f"Cannot validate output directory: {exc}"
+    if collective:
+        result = [error]
+        distributed.broadcast_object_list(result, src=0)
+        error = result[0]
+        distributed.barrier()
+    if error:
+        raise ValueError(error)
+
+
+def validate_runtime(args, model_config, recipe="sft_only", *, answer_format="answer_only"):
     import torch
     from scripts.train.storage.cloud_models import run_destination
 
@@ -17,7 +40,7 @@ def validate_runtime(args, model_config, recipe="sft_only"):
         previous_run = args.resume.resolve().parent.parent / "run.json"
         previous = json.loads(previous_run.read_text())
         args.run_location = previous["run_location"]
-        if args.run_location.get("recipe", recipe) != recipe or args.run_location.get("answer_format", "answer_only") != "answer_only":
+        if args.run_location.get("recipe", recipe) != recipe or args.run_location.get("answer_format", "answer_only") != answer_format:
             raise ValueError("Resume must use the original recipe and answer format")
         args.run_name = previous["run_location"]["name"]
         args.run_date = previous["run_location"]["date"]
@@ -30,7 +53,7 @@ def validate_runtime(args, model_config, recipe="sft_only"):
         raise ValueError("--run-date YYYY-MM-DD is required for training")
     if not args.resume:
         args.run_location = {"date": args.run_date, "name": args.run_name,
-                             "answer_format": "answer_only", "recipe": recipe}
+                             "answer_format": answer_format, "recipe": recipe}
     relative = run_destination(
         "runs", model_config["repository"], args.run_date, args.run_name,
         answer_format=args.run_location.get("answer_format"), recipe=args.run_location.get("recipe"),
@@ -42,14 +65,6 @@ def validate_runtime(args, model_config, recipe="sft_only"):
             *Path(relative).parts[1:]
         )
     output = args.output_dir.resolve()
-    if output.exists() and any(output.iterdir()) and not args.resume:
-        raise ValueError(
-            "Output directory is nonempty; choose a new directory or use --resume"
-        )
-    if args.resume and not (args.resume / "trainer_state.json").is_file():
-        raise ValueError(
-            "--resume must point to a Trainer checkpoint containing trainer_state.json"
-        )
     if not torch.cuda.is_available():
         raise ValueError(
             "Training requires CUDA; use --inspect or --check-batch for CPU checks"
@@ -62,6 +77,10 @@ def validate_runtime(args, model_config, recipe="sft_only"):
     torch.cuda.set_device(local_rank)
     if not torch.cuda.is_bf16_supported():
         raise ValueError("This configuration requires BF16-capable GPUs")
+    if int(os.environ.get("WORLD_SIZE", "1")) > 1:
+        from accelerate import PartialState
+        PartialState()
+    validate_output_directory(output, args.resume)
     return output
 
 
@@ -119,6 +138,9 @@ def save_run_metadata(
         reject_secrets(run['launch_config'])
     if mixture_report is not None:
         run["mixture"] = mixture_report
+    if config.get("answer_format")=="cot":
+        from scripts.train.shared.cot_budget import generation_policy, MODEL_PARSERS
+        run["generation_budget_policy"] = generation_policy(config,reasoning_parser=MODEL_PARSERS[args.model])
     if args.resume:
         previous_path = args.resume.resolve().parent.parent / "run.json"
         previous = json.loads(previous_path.read_text())
@@ -126,6 +148,8 @@ def save_run_metadata(
             raise ValueError(
                 "Resume configuration, prompts, or split files differ from run.json"
             )
+    if config.get("answer_format")=="cot":
+        atomic_json(output / "cot_generation_policy.json",run["generation_budget_policy"])
     atomic_json(output / "run.json", run)
     atomic_json(output / "generation_policy.json", evaluation_settings(config, model_config)["generation"])
     shutil.copy2(args.catalog, output / "label_catalog.yaml")

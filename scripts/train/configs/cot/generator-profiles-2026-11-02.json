@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "audit": "2026-11-02 bounded source compatibility review; profiles are exact maps, not wildcard permissions",
+  "current_implementation": {
+    "evidence_media.py": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+    "gemini_media.py": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+    "generate.py": "2ceafdb30b2bdb98157ced412e35261e1a0ea159a2c8c889538e99295090b025",
+    "medical.py": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+    "preflight.py": "5e0d0b8156a94e94c605122567f62fd9fc04e51b2bea9601259058bfb0f40c90",
+    "preview.py": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+    "quality.py": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+    "request_runtime.py": "7205b8b4a202a2f3d035bcc589d404ce95cb3cfc9781ecbedc195cad16ce5b25",
+    "source_cache.py": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+    "transport_media.py": "c491890308ff0bfae94661996b4f4e9d02e8ceb99d7a8c5b07ef235f3595f0f4"
+  },
+  "profiles": {
+    "0b851e315723464a86bc4902f5488fa4fdcc7b061de86763fc54c8d3ba8dfb84": {
+      "implementation": {
+        "source_cache.py": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+        "medical.py": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+        "preflight.py": "5e0d0b8156a94e94c605122567f62fd9fc04e51b2bea9601259058bfb0f40c90",
+        "evidence_media.py": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+        "gemini_media.py": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+        "quality.py": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+        "generate.py": "70b23a2a44a0ed89e52bd79033fa2ce43f8f7cc18aa8ff1e0f50df9802b0e5fd",
+        "preview.py": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+        "transport_media.py": "c491890308ff0bfae94661996b4f4e9d02e8ceb99d7a8c5b07ef235f3595f0f4",
+        "request_runtime.py": "7205b8b4a202a2f3d035bcc589d404ce95cb3cfc9781ecbedc195cad16ce5b25"
+      },
+      "libraries": {
+        "litellm": "1.106.4",
+        "google-genai": "2.33.0"
+      }
+    },
+    "dfd8f70a4bfbd0df1ebff15d37fae7cf068490b1c4ebc9c1ffb4c01e8de8abf9": {
+      "implementation": {
+        "source_cache.py": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+        "medical.py": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+        "evidence_media.py": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+        "gemini_media.py": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+        "quality.py": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+        "generate.py": "4fa8af4913131a8c6836d5e30942ff8f7ee9f7694d5c70c887b6aa1d462f5bbd",
+        "preview.py": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+        "request_runtime.py": "9fe12217d41ca0690610a1d29435d6e7dd414d17b58e3eb9a043a2db92d69383"
+      },
+      "libraries": {
+        "litellm": "1.106.4",
+        "google-genai": "2.33.0"
+      }
+    },
+    "552365d1e9db8b47236a6c0d490b7095e25731f06b3d34df83be74589881bb33": {
+      "implementation": {
+        "source_cache.py": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+        "medical.py": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+        "preflight.py": "5e0d0b8156a94e94c605122567f62fd9fc04e51b2bea9601259058bfb0f40c90",
+        "evidence_media.py": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+        "gemini_media.py": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+        "quality.py": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+        "generate.py": "95bdbfb6970b8f2e21ec7b2208a97b4f206d52bf41f1af945e459c975dcf6b62",
+        "preview.py": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+        "transport_media.py": "c491890308ff0bfae94661996b4f4e9d02e8ceb99d7a8c5b07ef235f3595f0f4",
+        "request_runtime.py": "7205b8b4a202a2f3d035bcc589d404ce95cb3cfc9781ecbedc195cad16ce5b25"
+      },
+      "libraries": {
+        "litellm": "1.106.4",
+        "google-genai": "2.33.0"
+      }
+    }
+  },
+  "source_pins": {
+    "scripts/cot/evidence_media.py": {
+      "main_sha256": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+      "base_sha256": "67095af671940ac49af9b68b0edcd0add4cb647ee6ef3037590272e961120db4"
+    },
+    "scripts/cot/gemini_media.py": {
+      "main_sha256": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+      "base_sha256": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0"
+    },
+    "scripts/cot/generate.py": {
+      "main_sha256": "2ceafdb30b2bdb98157ced412e35261e1a0ea159a2c8c889538e99295090b025",
+      "base_sha256": "8807953c0654bdd163556bfaae5e09639be5492a07176998cdfa6be6b9a3867c"
+    },
+    "scripts/cot/medical.py": {
+      "main_sha256": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+      "base_sha256": "e068fa5da588017f97772bee0e9efcd9c20e71454d1bde5c0e4f2f02e29f1550"
+    },
+    "scripts/cot/preflight.py": {
+      "main_sha256": "5e0d0b8156a94e94c605122567f62fd9fc04e51b2bea9601259058bfb0f40c90",
+      "base_sha256": null
+    },
+    "scripts/cot/preview.py": {
+      "main_sha256": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+      "base_sha256": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe"
+    },
+    "scripts/cot/quality.py": {
+      "main_sha256": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+      "base_sha256": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d"
+    },
+    "scripts/cot/request_runtime.py": {
+      "main_sha256": "7205b8b4a202a2f3d035bcc589d404ce95cb3cfc9781ecbedc195cad16ce5b25",
+      "base_sha256": null
+    },
+    "scripts/cot/source_cache.py": {
+      "main_sha256": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+      "base_sha256": null
+    },
+    "scripts/cot/transport_media.py": {
+      "main_sha256": "c491890308ff0bfae94661996b4f4e9d02e8ceb99d7a8c5b07ef235f3595f0f4",
+      "base_sha256": null
+    },
+    "scripts/train/shared/data.py": {
+      "main_sha256": "191ce2b78990d40c2a34c96233cfa2c1e25754966d8a4a99dab7e4db74c84941",
+      "base_sha256": "191ce2b78990d40c2a34c96233cfa2c1e25754966d8a4a99dab7e4db74c84941"
+    },
+    "scripts/train/shared/grounding.py": {
+      "main_sha256": "85e810bcef8b22b88039938f14d5f3f6bd2c7d29bfb84ca5c34f74a76e099603",
+      "base_sha256": "85e810bcef8b22b88039938f14d5f3f6bd2c7d29bfb84ca5c34f74a76e099603"
+    },
+    "scripts/preprocess/prepared_manifest.py": {
+      "main_sha256": "b6a66abed9d864c4df3305457bdf2800f1e7c2c357a78020da490df235e86423",
+      "base_sha256": "b6a66abed9d864c4df3305457bdf2800f1e7c2c357a78020da490df235e86423"
+    },
+    "scripts/train/configs/catalogs/RGB/label_catalog.yaml": {
+      "main_sha256": "2e7bd35695171cb919dff650dd135068ffb4df43849c312a730081afe09d2b91",
+      "base_sha256": "2e7bd35695171cb919dff650dd135068ffb4df43849c312a730081afe09d2b91"
+    },
+    "scripts/train/prompts/answer_only/RGB/medical_vqa.yaml": {
+      "main_sha256": "4cb142ea67527b904ebe045b636d0381f75722d90a26eba98a5b65362abe2b56",
+      "base_sha256": "4cb142ea67527b904ebe045b636d0381f75722d90a26eba98a5b65362abe2b56"
+    }
+  }
+}
