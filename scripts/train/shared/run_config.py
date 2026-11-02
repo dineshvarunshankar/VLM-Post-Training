@@ -140,7 +140,14 @@ def compile_run(config):
     for key in ('entity', 'project'):
         if not isinstance(c['wandb'][key], str) or not c['wandb'][key].strip():
             raise ValueError(f'wandb.{key} must be a nonempty string')
-    fields(c['execution'], 'training_gpus training_devices vllm_server_url vllm_model_name', 'execution')
+    execution_fields = 'training_gpus training_devices vllm_server_url vllm_model_name'
+    if 'vllm_gpu_sharing' in c['execution']:
+        execution_fields += ' vllm_gpu_sharing'
+        if type(c['execution']['vllm_gpu_sharing']) is not bool:
+            raise ValueError('execution.vllm_gpu_sharing must be true or false')
+        if c['execution']['vllm_gpu_sharing'] and c['recipe'] != 'sft':
+            raise ValueError('execution.vllm_gpu_sharing currently supports SFT only')
+    fields(c['execution'], execution_fields, 'execution')
     gpus = c['execution']['training_gpus']
     if type(gpus) is not int or gpus < 1:
         raise ValueError('execution.training_gpus must be a positive integer')

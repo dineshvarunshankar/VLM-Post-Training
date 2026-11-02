@@ -14,7 +14,8 @@ from scripts.train.rl.rollout.features import encode_video_features
 
 
 class MedicalVLLMEvaluator:
-    def __init__(self, client, feature_config, processor, catalog, generation, run_id, max_tokens=1024, *, experiment=None, medical_templates=None):
+    def __init__(self, client, feature_config, processor, catalog, generation, run_id, max_tokens=1024, *, experiment=None, medical_templates=None, lifecycle=None):
+        self.lifecycle = lifecycle
         self.client, self.feature_config, self.processor = client, feature_config, processor
         self.catalog, self.generation, self.run_id = catalog, dict(generation), run_id
         if type(max_tokens) is not int or max_tokens <= 0:
@@ -72,18 +73,29 @@ class MedicalVLLMEvaluator:
         if dataset is None or not len(dataset):
             raise ValueError('Medical validation cannot be empty')
         started = time.monotonic()
-        auxiliary_rows, auxiliary_preparation = self.auxiliary.prepare(dataset, prefix)
+        auxiliary_rows, auxiliary_preparation = self._phase(
+            'prepare auxiliary rows', lambda: self.auxiliary.prepare(dataset, prefix))
+        if self.lifecycle is not None:
+            with self.lifecycle.generation(trainer.vllm_generation.sync_weights):
+                trainer._last_loaded_step = trainer.state.global_step
+                return self._evaluate(trainer, dataset, prefix, started, additional_metrics, auxiliary_rows, auxiliary_preparation)
         trainer.vllm_generation.sync_weights()
         trainer._last_loaded_step = trainer.state.global_step
         trainer.accelerator.wait_for_everyone()
+        return self._evaluate(trainer, dataset, prefix, started, additional_metrics, auxiliary_rows, auxiliary_preparation)
+
+    def _phase(self, label, operation):
+        return self.lifecycle.phase(label, operation) if self.lifecycle is not None else operation()
+
+    def _evaluate(self, trainer, dataset, prefix, started, additional_metrics, auxiliary_rows, auxiliary_preparation):
         version = f'{self.run_id}:{prefix}:step-{trainer.state.global_step}'
         records = []
         rank, world = trainer.accelerator.process_index, trainer.accelerator.num_processes
         indices = list(range(rank, len(dataset), world))
         rows = [dataset[index] for index in indices]
-        predictions = self.predict_many(trainer, rows, version,
+        predictions = self._phase('medical prediction', lambda: self.predict_many(trainer, rows, version,
             [trainer.args.seed + index for index in indices],
-            [answer_schema(self.catalog['categories'][row['reference']['category']]) for row in rows])
+            [answer_schema(self.catalog['categories'][row['reference']['category']]) for row in rows]))
         for index, row, prediction in zip(indices, rows, predictions):
             records.append(dict(index=index, reference=row['reference'], answer=row['answer'], prediction=prediction))
         records = sorted(gather_object(records), key=lambda item: item['index'])
@@ -93,9 +105,9 @@ class MedicalVLLMEvaluator:
         auxiliary_records = []
         indices = list(range(rank, len(auxiliary_rows), world))
         rows = [auxiliary_rows[index] for index in indices]
-        predictions = self.predict_many(trainer, rows, version,
+        predictions = self._phase('auxiliary prediction', lambda: self.predict_many(trainer, rows, version,
             [trainer.args.seed + len(dataset) + index for index in indices],
-            [row['reward_context']['schema'] for row in rows])
+            [row['reward_context']['schema'] for row in rows]))
         for index, row, prediction in zip(indices, rows, predictions):
             auxiliary_records.append(dict(index=index, reference=row['reference'], prediction=prediction,
                                           reward_context=row['reward_context']))

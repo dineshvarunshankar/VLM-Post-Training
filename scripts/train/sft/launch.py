@@ -68,6 +68,8 @@ def parse_args():
     )
     parser.add_argument("--checkpoint", help="Verified local AirLab model directory")
     parser.add_argument("--vllm-server-url", default=os.environ.get("VLLM_SERVER_URL"))
+    parser.add_argument("--vllm-gpu-sharing", action="store_true",
+                        help="Sleep the evaluation server while training on its GPUs")
     parser.add_argument("--vllm-model-name", default=os.environ.get("VLLM_MODEL_NAME"))
     parser.add_argument("--revision", help="Revision for an overridden checkpoint")
     parser.add_argument(
@@ -237,6 +239,13 @@ def main():
                                api_key=os.environ.get("VLLM_API_KEY"))
     client.check_compatibility()
     output = validate_runtime(args, model_config)
+    evaluation_lifecycle = None
+    if args.vllm_gpu_sharing:
+        from accelerate import PartialState
+        from scripts.train.shared.eval_lifecycle import SharedEvaluationServer
+        evaluation_lifecycle = SharedEvaluationServer(client, PartialState())
+        # Distributed state is ready; no model weights have been loaded yet.
+        evaluation_lifecycle.initialize()
     from scripts.train.shared.tracking import configure_tracking, add_tracking_metadata
     train_args.update(configure_tracking(args, "sft_only", output, repository=model_config["repository"]))
     model, adapter_summary = load_lora_model(model_config, checkpoint_config, config)
@@ -251,6 +260,7 @@ def main():
         f"{args.run_date}:{args.model}:{args.run_name}",
         max_tokens=evaluation["max_new_tokens"],
         experiment=config, medical_templates=read_yaml(args.prompts),
+        lifecycle=evaluation_lifecycle,
     )
     trainer = MedicalSFTTrainer(
         model=model,

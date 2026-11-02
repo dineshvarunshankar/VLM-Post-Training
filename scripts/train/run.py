@@ -38,6 +38,8 @@ def stage_command(plan, stage, bundle):
                'output-dir': stage['output'], 'run-name': c['run']['name'], 'run-date': c['run']['date'],
                'vllm-server-url': c['execution']['vllm_server_url'],
                'vllm-model-name': c['execution']['vllm_model_name']}
+    if c['execution'].get('vllm_gpu_sharing', False):
+        command.append('--vllm-gpu-sharing')
     if c['checkpoint']:
         options.update(checkpoint=c['checkpoint'], revision=c['model_settings']['revision'])
     if 'sft_run' in stage:
