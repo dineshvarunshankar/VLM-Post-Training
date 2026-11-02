@@ -1,6 +1,7 @@
 """Export the selected LoRA model as independently loadable merged weights."""
 
 import gc
+import hashlib
 import tempfile
 from pathlib import Path
 
@@ -50,6 +51,55 @@ def verify_export(run):
     return report
 
 
+
+def _tensor_digest(tensor):
+    raw = tensor.detach().cpu().contiguous().view(torch.uint8).numpy()
+    return hashlib.sha256(memoryview(raw)).hexdigest()
+
+
+def _expected_lora_merges(model):
+    """Fingerprint standard Linear merges one layer at a time, before mutation."""
+    from peft.tuners.lora.layer import Linear, LoraLayer
+
+    expected = []
+    if any(config.modules_to_save for config in model.peft_config.values()):
+        raise ValueError('Export merge verification does not support modules_to_save')
+    for name, layer in model.named_modules():
+        if not isinstance(layer, LoraLayer):
+            continue
+        active = [key for key in layer.active_adapters if key in layer.lora_A]
+        if (not isinstance(layer, Linear) or layer.fan_in_fan_out or layer.lora_variant
+                or layer.merged or layer.disable_adapters or len(active) != 1):
+            raise ValueError(f'Unsupported adapter merge for verification: {name}')
+        adapter = active[0]
+        if layer.lora_bias[adapter]:
+            raise ValueError('Export merge verification does not support LoRA bias')
+        a, b = layer.lora_A[adapter].weight, layer.lora_B[adapter].weight
+        if a.dtype != torch.float32 or b.dtype != torch.float32:
+            raise ValueError('Export merge verification requires FP32 LoRA adapters')
+        base = layer.get_base_layer()
+        # PEFT safe_merge rounds the delta to base dtype BEFORE adding it.
+        # This differs from a FP32 add followed by one final BF16 cast.
+        with torch.no_grad():
+            delta = (b @ a) * layer.scaling[adapter]
+            value = base.weight.detach().clone()
+            value += delta.to(value.dtype)
+            if not torch.isfinite(value).all():
+                raise ValueError(f'Non-finite expected merged weight: {name}')
+            expected.append((name, base, _tensor_digest(value)))
+            del value, delta
+    if not expected:
+        raise ValueError('Export merge verification found no supported adapters')
+    return expected
+
+
+def _logit_comparison(actual, reference):
+    close = torch.isclose(actual, reference, rtol=0.02, atol=0.1)
+    return {'rtol': 0.02, 'atol': 0.1, 'within_tolerance': bool(close.all()),
+            'mismatched_elements': int((~close).sum()), 'elements': close.numel(),
+            'max_abs_error': float((actual - reference).abs().max())}
+
+
 def export_merged(model, processor, run, selection):
     """Called on rank zero after the trainer restores its best checkpoint."""
     run = Path(run)
@@ -76,10 +126,24 @@ def export_merged(model, processor, run, selection):
             .float()
             .cpu()
         )
+    expected_merges = _expected_lora_merges(model)
     merged = model.merge_and_unload(safe_merge=True)
+    merged_parameters = {id(parameter) for parameter in merged.parameters()}
+    for name, layer, expected_digest in expected_merges:
+        if id(layer.weight) not in merged_parameters or _tensor_digest(layer.weight) != expected_digest:
+            raise ValueError(f'Merged weight differs from verified LoRA arithmetic: {name}')
+    verified_merge_count = len(expected_merges)
+    del expected_merges
+    merged.to(device="cpu")
+    merged.eval()
     merged.config.use_cache = True
     if any("lora_" in name for name, _ in merged.named_parameters()):
         raise ValueError("LoRA parameters remain after merging")
+    with torch.inference_mode(), cpu_export_attention(merged):
+        merged_reference = merged(**inputs).logits[:, -1].float().cpu()
+    if not torch.isfinite(reference).all() or not torch.isfinite(merged_reference).all():
+        raise ValueError("Non-finite export verification logits")
+    adapter_drift = _logit_comparison(merged_reference, reference)
     with tempfile.TemporaryDirectory(prefix=".exporting-", dir=run) as temporary:
         staging = Path(temporary) / "merged"
         merged.save_pretrained(staging, safe_serialization=True, max_shard_size="4GB")
@@ -94,6 +158,7 @@ def export_merged(model, processor, run, selection):
             dtype=next(merged.parameters()).dtype,
             device_map="cpu",
             output_loading_info=True,
+            attn_implementation=merged.config._attn_implementation,
         )
         if any(
             info.get(key)
@@ -110,9 +175,10 @@ def export_merged(model, processor, run, selection):
         reloaded.eval()
         with torch.inference_mode(), cpu_export_attention(reloaded):
             actual = reloaded(**inputs).logits[:, -1].float()
-        # BF16 merge and CPU/GPU kernels can differ slightly; this is a smoke check,
-        # not a replacement for the held-out multimodal evaluation.
-        torch.testing.assert_close(actual, reference, rtol=0.02, atol=0.1)
+        # Isolate serialization from BF16 adapter-to-merge rounding. Both
+        # forwards use the same merged weights, CPU kernels and attention mode.
+        torch.testing.assert_close(actual, merged_reference, rtol=0.02, atol=0.1)
+        reload_comparison = _logit_comparison(actual, merged_reference)
         del reloaded
         gc.collect()
         atomic_json(
@@ -122,7 +188,11 @@ def export_merged(model, processor, run, selection):
                 "reload_verified": True,
                 "adapter_completeness_verified": True,
                 "adapter_tensor_count": adapter_tensors,
-                "verification": "offline reload and text-logit comparison",
+                "verification": "exact LoRA merge arithmetic and offline merged-model text-logit comparison",
+                "merge_weights_verified": True,
+                "merge_weight_count": verified_merge_count,
+                "adapter_to_merged_logits": adapter_drift,
+                "merged_to_reload_logits": reload_comparison,
                 "selection": selection,
                 "adapter_files": file_records(run / "adapter"),
                 "files": file_records(staging),
