@@ -103,7 +103,7 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         rank,world = trainer.accelerator.process_index,trainer.accelerator.num_processes
         indices = list(range(rank,len(dataset),world))
         rows = [dataset[i] for i in indices]
-        predictions = self._phase('CoT medical prediction',lambda:self.predict_many(trainer,rows,version,
+        predictions = self._prediction_phase('CoT medical prediction',lambda:self.predict_many(trainer,rows,version,
             [trainer.args.seed+i for i in indices],[None]*len(rows)))
         records = [dict(index=i,reference=row['reference'],answer=row['answer'],prediction=pred['answer'] or '',
                         raw_completion=pred['raw'],diagnostics=pred['diagnostics']) for i,row,pred in zip(indices,rows,predictions)]
@@ -116,7 +116,7 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         report['cot_diagnostics'] = diagnostics
         indices = list(range(rank,len(auxiliary_rows),world))
         rows = [auxiliary_rows[i] for i in indices]
-        predictions = self._phase('CoT direct prediction',lambda:self.predict_many(trainer,rows,version,
+        predictions = self._prediction_phase('CoT direct prediction',lambda:self.predict_many(trainer,rows,version,
             [trainer.args.seed+len(dataset)+i for i in indices],[None]*len(rows)))
         auxiliary_records = [dict(index=i,reference=row['reference'],task=row['task'],answer=row['answer'],
             prediction=pred['answer'],raw_completion=pred['raw'],diagnostics=pred['diagnostics'],teacher_available=row['teacher_available']) for i,row,pred in zip(indices,rows,predictions)]

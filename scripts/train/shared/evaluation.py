@@ -87,13 +87,17 @@ class MedicalVLLMEvaluator:
     def _phase(self, label, operation):
         return self.lifecycle.phase(label, operation) if self.lifecycle is not None else operation()
 
+    def _prediction_phase(self, label, operation):
+        from scripts.train.shared.distributed_local_work import run_local_work
+        return self._phase(label, lambda: run_local_work(label, operation))
+
     def _evaluate(self, trainer, dataset, prefix, started, additional_metrics, auxiliary_rows, auxiliary_preparation):
         version = f'{self.run_id}:{prefix}:step-{trainer.state.global_step}'
         records = []
         rank, world = trainer.accelerator.process_index, trainer.accelerator.num_processes
         indices = list(range(rank, len(dataset), world))
         rows = [dataset[index] for index in indices]
-        predictions = self._phase('medical prediction', lambda: self.predict_many(trainer, rows, version,
+        predictions = self._prediction_phase('medical prediction', lambda: self.predict_many(trainer, rows, version,
             [trainer.args.seed + index for index in indices],
             [answer_schema(self.catalog['categories'][row['reference']['category']]) for row in rows]))
         for index, row, prediction in zip(indices, rows, predictions):
@@ -105,7 +109,7 @@ class MedicalVLLMEvaluator:
         auxiliary_records = []
         indices = list(range(rank, len(auxiliary_rows), world))
         rows = [auxiliary_rows[index] for index in indices]
-        predictions = self._phase('auxiliary prediction', lambda: self.predict_many(trainer, rows, version,
+        predictions = self._prediction_phase('auxiliary prediction', lambda: self.predict_many(trainer, rows, version,
             [trainer.args.seed + len(dataset) + index for index in indices],
             [row['reward_context']['schema'] for row in rows]))
         for index, row, prediction in zip(indices, rows, predictions):

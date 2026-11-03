@@ -215,6 +215,13 @@ def select_medical_examples(splits, config):
 
 
 
+def evaluation_request_timeout(config):
+    from scripts.train.shared.contracts import number
+    timeout = config.get('evaluation', {}).get('request_timeout_seconds', 600)
+    number(timeout, 'evaluation.request_timeout_seconds', strict=True)
+    return timeout
+
+
 def evaluation_settings(config, model_profile):
     """Resolve the same validation decoding and answer budget for SFT and RL."""
     from scripts.train.shared.contracts import validate_generation

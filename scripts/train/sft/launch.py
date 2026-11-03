@@ -220,13 +220,17 @@ def prepare_sft_data(args, config):
         return _prepare_sft_data(args, config)
     from accelerate import PartialState
     from accelerate.utils import broadcast_object_list
+    from scripts.train.shared.distributed_local_work import run_local_work
     state = PartialState()
     payload = [None]
-    if state.is_main_process:
+    def prepare():
+        if not state.is_main_process:
+            return
         try:
             payload[0] = {"data": _prepare_sft_data(args, config)}
         except Exception as error:
             payload[0] = {"error": f"{type(error).__name__}: {error}"}
+    run_local_work('CoT data preparation', prepare)
     broadcast_object_list(payload)
     if "error" in payload[0]:
         raise ValueError("CoT rank-zero data validation failed: " + payload[0]["error"])
@@ -288,8 +292,10 @@ def main():
     from scripts.train.shared.evaluation import MedicalVLLMEvaluator
     from scripts.train.shared.vllm import feature_configuration
     from scripts.train.rl.rollout.client import VideoRolloutClient
+    from scripts.train.shared.config import evaluation_request_timeout
     client = VideoRolloutClient(args.vllm_server_url, args.vllm_model_name,
-                               api_key=os.environ.get("VLLM_API_KEY"))
+                               api_key=os.environ.get("VLLM_API_KEY"),
+                               timeout=evaluation_request_timeout(config))
     client.check_compatibility()
     if config.get('answer_format')=='cot':
         from scripts.train.shared.cot_budget import PARSERS

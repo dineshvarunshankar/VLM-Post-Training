@@ -163,7 +163,9 @@ def validate_experiment(config, *, sft=False):
     boolean(lora['use_rslora'], 'lora.use_rslora')
     keys(config['data_checks'], 'stabilized_coordinates_verified', 'data_checks')
     boolean(config['data_checks']['stabilized_coordinates_verified'], 'stabilized_coordinates_verified')
-    keys(config['evaluation'], 'max_new_tokens', 'evaluation', 'sources aggregation request_batch_size generation')
+    keys(config['evaluation'], 'max_new_tokens', 'evaluation', 'sources aggregation request_batch_size request_timeout_seconds generation')
+    if 'request_timeout_seconds' in config['evaluation']:
+        number(config['evaluation']['request_timeout_seconds'], 'evaluation.request_timeout_seconds', strict=True)
     if 'generation' in config['evaluation']:
         validate_generation(config['evaluation']['generation'])
     if 'request_batch_size' in config['evaluation']:
