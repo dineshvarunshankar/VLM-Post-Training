@@ -1,0 +1,22 @@
+{
+  "nodes": {
+    "node_qwen9b_cot": [
+      {
+        "config": "scripts/train/configs/cot/qwen3.5-9b.yaml",
+        "train_gpu": [0, 1, 2, 3],
+        "eval_gpu": 4,
+        "http_port": 8012,
+        "group_port": 51232
+      }
+    ],
+    "node_gemma12b_cot": [
+      {
+        "config": "scripts/train/configs/cot/gemma4-12b-it.yaml",
+        "train_gpu": [0, 1, 2, 3],
+        "eval_gpu": 4,
+        "http_port": 8022,
+        "group_port": 51236
+      }
+    ]
+  }
+}

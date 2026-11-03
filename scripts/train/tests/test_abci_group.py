@@ -16,8 +16,30 @@ def fixture():
 
 
 class GroupTests(unittest.TestCase):
+    def test_cot_paths_and_repository_boundary(self):
+        plan=fixture()
+        plan['nodes']['a'][0]['config']='scripts/train/configs/cot/qwen3.5-9b.yaml'
+        self.assertEqual(len(validate_plan(plan)['a']),2)
+        for value in ('/tmp/run.yaml','scripts/train/configs/cot/../runs/a.yaml',
+                      'scripts/train/configs/other/a.yaml'):
+            plan['nodes']['a'][0]['config']=value
+            with self.subTest(path=value),self.assertRaises(ValueError): validate_plan(plan)
+
     def test_independent_pairs(self):
         self.assertEqual(len(validate_plan(fixture())['a']),2)
+
+    def test_cot_plan_matches_model_ranks_and_ports(self):
+        from urllib.parse import urlsplit
+        from scripts.train.shared.cot_inspect import resolve_inspection_run
+        root=Path(__file__).resolve().parents[3]
+        nodes=validate_plan(json.loads((root/'scripts/train/configs/abci/cot_two_nodes.json').read_text()))
+        self.assertEqual(len(nodes),2)
+        for entries in nodes.values():
+            entry=entries[0]
+            run=resolve_inspection_run(root/entry['config'],'/fixture/media','/fixture/splits')['run']
+            self.assertEqual(run['answer_format'],'cot')
+            self.assertEqual(run['execution']['training_gpus'],len(entry['train_gpu']))
+            self.assertEqual(urlsplit(run['execution']['vllm_server_url']).port,entry['http_port'])
 
     def test_multi_gpu_group_and_environment(self):
         from scripts.train.launch_abci_group import environment
@@ -64,7 +86,7 @@ class GroupTests(unittest.TestCase):
         from scripts.train.shared.run_config import load_run, compile_run
         root=Path(__file__).resolve().parents[3]
         plan=validate_plan(json.loads((root/'scripts/train/configs/abci/sft_two_nodes.json').read_text()))
-        self.assertEqual([len(x) for x in plan.values()],[1]*7)
+        self.assertEqual([len(x) for x in plan.values()],[1]*4)
         seen=[]
         for entries in plan.values():
             for entry in entries:
@@ -72,9 +94,9 @@ class GroupTests(unittest.TestCase):
                 self.assertEqual(urlsplit(run['execution']['vllm_server_url']).port,entry['http_port'])
                 self.assertEqual(run['execution']['training_gpus'], len(entry['train_gpu']) if isinstance(entry['train_gpu'], list) else 1)
                 self.assertEqual(run['sft']['effective_batch_size'],16)
-                self.assertEqual(run['sft']['training']['num_train_epochs'],3)
+                self.assertEqual(run['sft']['training']['num_train_epochs'],8 if run['model'].startswith('qwen') else 5)
                 seen.append(run['run']['name'])
-        self.assertEqual(len(set(seen)),7)
+        self.assertEqual(len(set(seen)),4)
         self.assertNotIn('qwen9b-stabilized-medical',seen)
 
     def test_worker_success_and_failure_clean_up_servers(self):

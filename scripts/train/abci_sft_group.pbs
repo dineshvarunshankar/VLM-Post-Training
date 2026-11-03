@@ -9,8 +9,8 @@
 #PBS -l walltime=168:00:00
 #PBS -j oe
 set -euo pipefail
-: "${ABCI_SFT_NODE:?Set ABCI_SFT_NODE to node_a or node_b}"
+: "${ABCI_SFT_NODE:?Set ABCI_SFT_NODE to a node name in the selected plan}"
 : "${PBS_O_WORKDIR:?Submit from the repository root}"
 cd "$PBS_O_WORKDIR"
 test -f scripts/train/launch_abci_group.py
-exec python3 scripts/train/launch_abci_group.py --node "$ABCI_SFT_NODE" --run
+exec python3 scripts/train/launch_abci_group.py --plan "${ABCI_SFT_PLAN:-scripts/train/configs/abci/sft_two_nodes.json}" --node "$ABCI_SFT_NODE" --run

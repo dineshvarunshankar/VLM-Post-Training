@@ -28,7 +28,7 @@ def validate_plan(plan):
             if set(entry) != {'config','train_gpu','eval_gpu','http_port','group_port'}:
                 raise ValueError('Unexpected allocation fields')
             config = entry['config']
-            if not isinstance(config, str) or not config.startswith('scripts/train/configs/runs/') or '..' in Path(config).parts or not config.endswith('.yaml'):
+            if not isinstance(config, str) or not config.startswith(('scripts/train/configs/runs/', 'scripts/train/configs/cot/')) or '..' in Path(config).parts or not config.endswith('.yaml'):
                 raise ValueError('Expected a repository-relative run YAML')
             if config in configs:
                 raise ValueError('A run must occur only once in the plan')
