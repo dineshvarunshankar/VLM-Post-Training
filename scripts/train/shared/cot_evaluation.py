@@ -1,4 +1,4 @@
-"""Unconstrained medical reasoning evaluation with separate direct-task reports."""
+"""Free-form medical reasoning with constrained final JSON and direct-task reports."""
 
 from pathlib import Path
 import time
@@ -7,6 +7,7 @@ from accelerate.utils import gather_object
 
 from scripts.train.shared.cot_format import FORMATS, extract_cot_answer
 from scripts.train.shared.data import atomic_json
+from scripts.train.shared.decoding import answer_schema
 from scripts.train.shared.evaluation import MedicalVLLMEvaluator
 from scripts.train.shared.metrics import score_medical_evaluation
 from scripts.train.rl.video import prepare_video_prompt
@@ -54,6 +55,16 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
     def budget(self, task):
         return self.caption_max_tokens if task=='scene_description' else self.camera_max_tokens if task=='camera_view' else self.max_tokens
 
+    def answer_schema(self, row):
+        task = row.get('task', 'medical_vqa')
+        if task == 'medical_vqa':
+            return answer_schema(self.catalog['categories'][row['reference']['category']])
+        if task == 'camera_view':
+            return row['reward_context']['schema']
+        if task == 'scene_description':
+            return None
+        raise ValueError(f'Unsupported CoT evaluation task: {task}')
+
     def encode(self, trainer, row, version):
         # Gold evidence sampling belongs to teacher loss only. Generation receives
         # the same FPS video sampler used at inference, with no GT frame choices.
@@ -68,16 +79,22 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
     def predict_encoded(self, encoded, version, seed, schema):
         task = encoded.get('task','medical_vqa')
         packet = encoded.get('packet',encoded)
+        if task not in ('medical_vqa', 'camera_view', 'scene_description'):
+            raise ValueError(f'Unsupported CoT evaluation task: {task}')
+        if task != 'scene_description' and not isinstance(schema, dict):
+            raise ValueError(f'{task} evaluation requires a task JSON schema')
+        if task == 'scene_description' and schema is not None:
+            raise ValueError('Scene descriptions must not have a JSON schema')
         settings = self.generation
-        thinking = {}
+        thinking = {'reasoning_parser': self.reasoning_parser}
         if task=='medical_vqa':
-            thinking = {'thinking_token_budget':self.generation_policy['medical_vqa']['thinking_token_budget'],
-                        'reasoning_parser':self.reasoning_parser}
+            thinking['thinking_token_budget'] = self.generation_policy['medical_vqa']['thinking_token_budget']
         output = self.client.generate([packet],policy_version=version,
             temperature=settings['temperature'] if settings.get('do_sample',True) else 0,
             top_p=settings['top_p'],top_k=settings['top_k'],min_p=settings['min_p'],
             repetition_penalty=settings['repetition_penalty'],presence_penalty=settings.get('presence_penalty',0),
-            max_tokens=self.budget(task),seed=seed,schemas=None,**thinking)
+            max_tokens=self.budget(task),seed=seed,schemas=[schema] if schema is not None else None,
+            enable_thinking=task=='medical_vqa',**thinking)
         ids = output['completion_ids'][0]
         raw = self.processor.tokenizer.decode(ids,skip_special_tokens=False)
         finish = output.get('finish_reasons',[None])[0]
@@ -104,7 +121,7 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         indices = list(range(rank,len(dataset),world))
         rows = [dataset[i] for i in indices]
         predictions = self._prediction_phase('CoT medical prediction',lambda:self.predict_many(trainer,rows,version,
-            [trainer.args.seed+i for i in indices],[None]*len(rows)))
+            [trainer.args.seed+i for i in indices],[self.answer_schema(row) for row in rows]))
         records = [dict(index=i,reference=row['reference'],answer=row['answer'],prediction=pred['answer'] or '',
                         raw_completion=pred['raw'],diagnostics=pred['diagnostics']) for i,row,pred in zip(indices,rows,predictions)]
         records = sorted(gather_object(records),key=lambda r:r['index'])
@@ -117,7 +134,7 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         indices = list(range(rank,len(auxiliary_rows),world))
         rows = [auxiliary_rows[i] for i in indices]
         predictions = self._prediction_phase('CoT direct prediction',lambda:self.predict_many(trainer,rows,version,
-            [trainer.args.seed+len(dataset)+i for i in indices],[None]*len(rows)))
+            [trainer.args.seed+len(dataset)+i for i in indices],[self.answer_schema(row) for row in rows]))
         auxiliary_records = [dict(index=i,reference=row['reference'],task=row['task'],answer=row['answer'],
             prediction=pred['answer'],raw_completion=pred['raw'],diagnostics=pred['diagnostics'],teacher_available=row['teacher_available']) for i,row,pred in zip(indices,rows,predictions)]
         auxiliary_records = sorted(gather_object(auxiliary_records),key=lambda r:r['index'])
@@ -135,7 +152,7 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         report.update(backend='vllm',split=split,answer_format='cot',
             teacher_loss_coverage=self.coverage_report.get('teacher_loss',{}).get(split,{}),
             loss_scope='covered validated medical reasoning targets only; caption teacher loss reported separately',
-            decoding=dict(self.generation,constraint='unconstrained',generation_budget_policy=self.generation_policy,medical_max_new_tokens=self.max_tokens,
+            decoding=dict(self.generation,constraint='final_answer_json_schema',generation_budget_policy=self.generation_policy,medical_max_new_tokens=self.max_tokens,
                           caption_max_new_tokens=self.caption_max_tokens,camera_max_new_tokens=self.camera_max_tokens))
         metrics = {f'{prefix}_{key}':value for key,value in report['metrics'].items()}
         for source,values in report.get('medical_sources',{}).items():

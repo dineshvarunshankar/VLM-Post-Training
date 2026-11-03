@@ -28,9 +28,10 @@ def generation_policy(config, *, reasoning_parser):
     return {
         'enforcement':'vllm-0.30.0 native SamplingParams.thinking_token_budget',
         'medical_vqa':{'thinking':True,'max_new_tokens':config['cot']['medical_max_new_tokens'],
+                       'constraint':'final_answer_json_schema',
                        'thinking_token_budget':config['cot']['thinking_token_budget'],
                        'reasoning_parser':reasoning_parser,'final_answer_reserve':FINAL_ANSWER_RESERVE,
                        'conservative_transition_allowance':TRANSITION_ALLOWANCE},
-        'scene_description':{'thinking':False,'max_new_tokens':config['cot']['caption_max_new_tokens']},
-        'camera_view':{'thinking':False,'max_new_tokens':config['evaluation']['max_new_tokens']},
+        'scene_description':{'thinking':False,'constraint':'none','max_new_tokens':config['cot']['caption_max_new_tokens']},
+        'camera_view':{'thinking':False,'constraint':'task_json_schema','max_new_tokens':config['evaluation']['max_new_tokens']},
     }

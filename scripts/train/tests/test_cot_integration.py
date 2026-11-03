@@ -1,4 +1,4 @@
-"""Opt-in routing, held-out teacher coverage, and unconstrained generation."""
+"""Opt-in routing, held-out teacher coverage, and final-answer constraints."""
 from copy import deepcopy
 import importlib
 import json
@@ -55,7 +55,7 @@ class CoTIntegrationTests(unittest.TestCase):
             self.assertEqual(len(splits['validation']),2)
             self.assertEqual(len(plan['fixed']),4)
 
-    def test_generation_is_unconstrained_keeps_special_tokens_and_finish_reason(self):
+    def test_generation_constrains_final_answer_keeps_special_tokens_and_finish_reason(self):
         try: module=importlib.import_module('scripts.train.shared.cot_evaluation')
         except ModuleNotFoundError: module=None
         self.assertIsNotNone(module,'CoT evaluator is not implemented')
@@ -72,8 +72,10 @@ class CoTIntegrationTests(unittest.TestCase):
                 return 'Observed movement.\n</think>\n\n{"injury":1}<|im_end|>'
         client=Client()
         evaluator=module.CoTVLLMEvaluator(client,{},SimpleNamespace(tokenizer=Tokenizer()),{'categories':{}},settings['generation'],'run',model_family='qwen3_5',experiment=compile_run(run_config())['experiment'])
-        prediction=evaluator.predict_encoded({},'v',42,None)
-        self.assertIsNone(client.request['schemas'])
+        schema={'type':'object','properties':{'injury':{'type':'integer','enum':[0,1]}},'required':['injury'],'additionalProperties':False}
+        prediction=evaluator.predict_encoded({},'v',42,schema)
+        self.assertEqual(client.request['schemas'],[schema])
+        self.assertTrue(client.request['enable_thinking'])
         self.assertEqual(client.request['max_tokens'],4096)
         self.assertEqual(prediction['answer'],'{"injury":1}')
         self.assertEqual(prediction['diagnostics']['finish_reason'],'stop')

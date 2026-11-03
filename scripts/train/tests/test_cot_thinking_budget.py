@@ -43,7 +43,8 @@ class ThinkingBudgetTests(unittest.TestCase):
         processor=SimpleNamespace(tokenizer=SimpleNamespace(decode=lambda *args,**kwargs:'Visible evidence.</think>{"injury":1}<|im_end|>'))
         evaluator=CoTVLLMEvaluator(Client(),{},processor,{}, {'do_sample':False,'temperature':0,'top_p':1,'top_k':0,'min_p':0,'repetition_penalty':1},'run',model_family='qwen3_5',experiment=experiment)
         for task in ('medical_vqa','scene_description','camera_view'):
-            evaluator.predict_encoded({'packet':{},'task':task},'version',42,None)
+            schema=None if task=='scene_description' else {'type':'object','properties':{'injury':{'type':'integer','enum':[0,1]}},'required':['injury']}
+            evaluator.predict_encoded({'packet':{},'task':task},'version',42,schema)
         self.assertEqual(requests[0].get('thinking_token_budget'),3064)
         self.assertEqual(requests[0].get('reasoning_parser'),'qwen3')
         self.assertEqual(requests[0]['max_tokens'],4096)

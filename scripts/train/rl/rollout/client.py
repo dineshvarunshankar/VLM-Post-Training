@@ -87,9 +87,34 @@ class VideoRolloutClient:
             raise ValueError(f'CoT thinking budget requires an initialized server parser. Start the compatible vLLM server with --reasoning-parser {reasoning_parser} and expose /server_info?config_format=json before training; the existing PSC launcher may require this explicit flag. Remove conflicting --reasoning-config marker overrides.')
         self._checked_reasoning_parsers = getattr(self, '_checked_reasoning_parsers', set()) | {reasoning_parser}
 
+    def check_cot_schema_compatibility(self, reasoning_parser):
+        """Require final-only grammar gating and explicit per-request thinking."""
+        self.check_thinking_budget_compatibility(reasoning_parser)
+        if reasoning_parser in getattr(self, '_checked_cot_schema_parsers', set()):
+            return
+        try:
+            info = self._request('GET', '/server_info', params={'config_format':'json'})
+            settings = info.get('vllm_config', {}).get('structured_outputs_config') or {}
+            api = self._request('GET', '/openapi.json')
+            body = api['paths']['/inference/v1/generate']['post']['requestBody']['content']['application/json']['schema']
+            if '$ref' in body:
+                body = api['components']['schemas'][body['$ref'].rsplit('/', 1)[-1]]
+            field = body.get('properties', {}).get('enable_thinking', {})
+            boolean = field.get('type') == 'boolean' or any(
+                option.get('type') == 'boolean' for option in field.get('anyOf', []))
+            ready = (settings.get('reasoning_parser') == reasoning_parser
+                     and settings.get('enable_in_reasoning') is False and boolean)
+        except (RuntimeError, KeyError, AttributeError, TypeError):
+            ready = False
+        if not ready:
+            raise ValueError('CoT final-answer schema evaluation requires the vllm-task-thinking.patch, '
+                             'a matching --reasoning-parser, and structured_outputs_config.enable_in_reasoning=false. '
+                             'Apply the pinned patches in the future-run environment and restart its server.')
+        self._checked_cot_schema_parsers = getattr(self, '_checked_cot_schema_parsers', set()) | {reasoning_parser}
+
     def generate(self, packets, *, policy_version, temperature, top_p, top_k,
                  repetition_penalty, max_tokens, schemas=None, presence_penalty=0.0, min_p=0.0, seed=None,
-                 thinking_token_budget=None, reasoning_parser=None):
+                 thinking_token_budget=None, reasoning_parser=None, enable_thinking=None):
         """Return one response per entry, grouping shared packets into n-way requests.
 
         policy_version is set by the weight-synchronization caller. Its cache salt
@@ -109,6 +134,12 @@ class VideoRolloutClient:
             raise ValueError('Invalid top_p or top_k')
         if type(max_tokens) is not int or max_tokens < 1:
             raise ValueError('max_tokens must be a positive integer')
+        if enable_thinking is not None:
+            if type(enable_thinking) is not bool:
+                raise ValueError('enable_thinking must be a boolean')
+            if not enable_thinking and thinking_token_budget is not None:
+                raise ValueError('Direct tasks must not set a thinking token budget')
+            self.check_cot_schema_compatibility(reasoning_parser)
         if thinking_token_budget is not None:
             if type(thinking_token_budget) is not int or not 0 <= thinking_token_budget < max_tokens:
                 raise ValueError('thinking_token_budget must be a non-negative integer below max_tokens')
@@ -149,6 +180,7 @@ class VideoRolloutClient:
                 'model': self.model, **packet, 'sampling_params': sampling,
                 'return_token_ids': True, 'stream': False,
                 'cache_salt': policy_version,
+                **({'enable_thinking': enable_thinking} if enable_thinking is not None else {}),
             })
             expected = packet['features']['mm_placeholders']
             if response.get('mm_placeholders') != expected:

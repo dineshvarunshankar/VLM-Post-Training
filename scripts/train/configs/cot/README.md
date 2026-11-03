@@ -103,3 +103,22 @@ Caption, camera, answer-only, and RL requests omit that field.
 Run metadata and `cot_generation_policy.json` record the resolved task policies.
 A GPU update, checkpoint reload, and both output formats still require separate validation for each model.
 PSC launch instructions and runtime requirements are in `scripts/train/psc/README.md`.
+
+CoT generation uses task-specific constraints:
+- Medical VQA enables thinking. The JSON schema applies only after the native reasoning boundary.
+- Native camera viewpoint disables thinking and constrains the direct JSON answer.
+- Scene description disables thinking and produces plain text without a JSON schema.
+
+Apply the pinned patches in the future-run server environment before starting its server:
+
+```bash
+python -m scripts.train.rl.rollout.patch --apply
+python -m scripts.train.rl.rollout.patch
+```
+
+The new `vllm-task-thinking.patch` forwards each request's thinking mode to the engine.
+CoT preflight requires this endpoint field, the matching reasoning parser, and `enable_in_reasoning=false`.
+An incompatible server fails before training starts. Do not modify an environment beneath an active job.
+The response parser still rejects missing keys, extra prose, malformed boundaries, and truncated output.
+Medical validation macro-F1 selects checkpoints; caption and camera results remain separate.
+Run metadata records these constraints. Resuming an older unconstrained CoT run with the new policy fails the existing metadata check.

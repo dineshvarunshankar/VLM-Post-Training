@@ -1,0 +1,29 @@
+--- a/vllm/entrypoints/scale_out/token_in_token_out/protocol.py
++++ b/vllm/entrypoints/scale_out/token_in_token_out/protocol.py
+@@ -150,6 +150,9 @@
+     token_ids: list[int] = Field(min_length=1)
+     """The token ids to generate text from."""
+
++    enable_thinking: bool | None = Field(default=None, strict=True)
++    """Task thinking mode; None preserves automatic reasoning detection."""
++
+     assistant_tokens_mask: list[int] | None = None
+     """Per-token mask (1 = assistant-generated, 0 = not).
+
+--- a/vllm/entrypoints/scale_out/token_in_token_out/serving.py
++++ b/vllm/entrypoints/scale_out/token_in_token_out/serving.py
+@@ -264,6 +264,14 @@
+             priority=request.priority,
+             data_parallel_rank=data_parallel_rank,
+             session_id=session_id,
++            reasoning_ended=(
++                not request.enable_thinking
++                if request.enable_thinking is not None else None
++            ),
++            reasoning_parser_kwargs=(
++                {"chat_template_kwargs": {"enable_thinking": request.enable_thinking}}
++                if request.enable_thinking is not None else None
++            ),
+         )
+
+         assert result_generator is not None

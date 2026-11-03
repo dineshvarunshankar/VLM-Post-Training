@@ -300,7 +300,7 @@ def main():
     if config.get('answer_format')=='cot':
         from scripts.train.shared.cot_budget import PARSERS
         from scripts.train.shared.cot_format import model_family
-        client.check_thinking_budget_compatibility(PARSERS[model_family(checkpoint_config)])
+        client.check_cot_schema_compatibility(PARSERS[model_family(checkpoint_config)])
     output = validate_runtime(args, model_config, answer_format=config.get("answer_format","answer_only"))
     evaluation_lifecycle = None
     if args.vllm_gpu_sharing:

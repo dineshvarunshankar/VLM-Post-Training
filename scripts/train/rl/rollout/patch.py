@@ -26,6 +26,7 @@ def main():
     package = Path(importlib.util.find_spec('vllm').origin).parent
     directory = Path(__file__).parent / 'patches'
     jobs = [(package.parent, directory / 'vllm-video-placeholder-mask.patch', 1),
+            (package.parent, directory / 'vllm-task-thinking.patch', 1),
             (package, directory / 'gemma-video-budget.patch', 1),
             (package, directory / 'qwen-video-processor-kwargs.patch', 1)]
     states = [(root, patch, strip, patch_state(root, patch, strip)) for root, patch, strip in jobs]
