@@ -16,7 +16,7 @@ class PSCLaunchTests(unittest.TestCase):
     def test_two_nodes_keep_all_ranks_and_gemma_runtime(self):
         module = self.module()
         for model in ('qwen3.8-27b', 'gemma4-31b-it'):
-            plan = {'run': {'model': model, 'answer_format': 'cot',
+            plan = {'experiment': {'attention':'flex_attention'}, 'run': {'model': model, 'answer_format': 'cot',
                            'execution': {'training_gpus': 16, 'training_devices': None,
                                          'vllm_gpu_sharing': True}}}
             command = module.training_command(plan, ['torchrun', 'train_sft.py', '--config', 'bundle.yaml'],

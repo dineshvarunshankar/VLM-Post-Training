@@ -27,7 +27,8 @@ def training_command(plan, stage_command, *, script, master, rank, job_id, pytho
     if rank not in ('0', '1'):
         raise ValueError('Expected one torchrun agent per node, with node rank 0 or 1')
     wrapper = []
-    if plan['run']['model'] == 'gemma4-31b-it':
+    if (plan['run']['model'] == 'gemma4-31b-it'
+            and plan['experiment']['attention'] == 'flex_attention'):
         wrapper = [str(Path(__file__).with_name('gemma_dynamic_flex_entry.py'))]
     return [python, '-m', 'torch.distributed.run', '--nnodes', '2', '--nproc-per-node', '8',
             '--node-rank', rank, '--rdzv-id', job_id, '--master-addr', master,

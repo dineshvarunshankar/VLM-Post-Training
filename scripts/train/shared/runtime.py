@@ -9,6 +9,30 @@ from pathlib import Path
 from scripts.train.shared.data import atomic_json, sha256
 from scripts.train.shared.config import evaluation_settings
 
+
+def validate_recovery_checkpoint(resume):
+    """Require atomic completion evidence only for explicit recovery resumes."""
+    checkpoint = Path(resume).resolve()
+    if (checkpoint.parent.parent.name == 'recovery'
+            and checkpoint.parent.name.startswith('.incomplete-')):
+        raise ValueError('Cannot resume an incomplete recovery checkpoint')
+    if checkpoint.parent.name != 'recovery':
+        return
+    try:
+        marker = json.loads((checkpoint / 'recovery_complete.json').read_text())
+        step = int(checkpoint.name.removeprefix('checkpoint-'))
+        if (not checkpoint.name.startswith('checkpoint-')
+                or not isinstance(marker, dict)
+                or type(marker.get('schema_version')) is not int
+                or marker['schema_version'] != 1
+                or marker.get('completed') is not True
+                or type(marker.get('global_step')) is not int
+                or marker['global_step'] != step):
+            raise ValueError('Invalid completion marker')
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError(f'Cannot resume incomplete or invalid recovery checkpoint: {checkpoint}') from exc
+
+
 def validate_output_directory(output, resume):
     """Share one output decision before any rank can create run artifacts."""
     import torch.distributed as distributed
@@ -21,6 +45,11 @@ def validate_output_directory(output, resume):
                 error = "Output directory is nonempty; choose a new directory or use --resume"
             elif resume and not (resume / "trainer_state.json").is_file():
                 error = "--resume must point to a Trainer checkpoint containing trainer_state.json"
+            elif resume:
+                try:
+                    validate_recovery_checkpoint(resume)
+                except ValueError as exc:
+                    error = str(exc)
         except OSError as exc:
             error = f"Cannot validate output directory: {exc}"
     if collective:

@@ -112,6 +112,21 @@ SFT_FIELDS = ('fsdp fsdp_config num_train_epochs learning_rate per_device_train_
               'metric_for_best_model greater_is_better accelerator_config')
 
 
+def validate_sft_reliability(train):
+    """Validate optional operational policies without altering training decisions."""
+    recovery = train.get('recovery')
+    if recovery is not None:
+        keys(recovery, 'before_evaluation save_steps save_total_limit', 'training.recovery')
+        boolean(recovery['before_evaluation'], 'recovery.before_evaluation')
+        for key in ('save_steps', 'save_total_limit'):
+            number(recovery[key], 'recovery.' + key, integer=True, strict=True)
+    health = train.get('health_check')
+    if health is not None:
+        keys(health, 'every_n_steps max_examples', 'training.health_check')
+        for key in ('every_n_steps', 'max_examples'):
+            number(health[key], 'health_check.' + key, integer=True, strict=True)
+
+
 def validate_early_stopping(train):
     policy = train.get('early_stopping')
     if policy is None:
@@ -176,7 +191,7 @@ def validate_experiment(config, *, sft=False):
     number(config['evaluation']['max_new_tokens'], 'evaluation.max_new_tokens', integer=True, strict=True)
     train = config['training']
     keys(train, 'seed ' + LOADER_FIELDS + (' ' + SFT_FIELDS if sft else ''), 'training',
-         'data_seed per_device_eval_batch_size gradient_checkpointing early_stopping' if sft else 'data_seed')
+         'data_seed per_device_eval_batch_size gradient_checkpointing early_stopping recovery health_check' if sft else 'data_seed')
     for key in ('seed', 'data_seed', 'dataloader_num_workers'):
         if key in train and not (key == 'data_seed' and train[key] is None):
             number(train[key], 'training.' + key, integer=True)
@@ -190,6 +205,7 @@ def validate_experiment(config, *, sft=False):
     if not sft:
         return
     validate_early_stopping(train)
+    validate_sft_reliability(train)
     if 'gradient_checkpointing' in train:
         boolean(train['gradient_checkpointing'], 'training.gradient_checkpointing')
         if train.get('fsdp') and train['gradient_checkpointing']:

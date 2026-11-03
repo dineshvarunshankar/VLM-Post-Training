@@ -147,6 +147,13 @@ sft:
     adam_beta2: 0.999
     adam_epsilon: 1.0e-08
     max_grad_norm: 1.0
+    recovery:
+      before_evaluation: true
+      save_steps: 100
+      save_total_limit: 2
+    health_check:
+      every_n_steps: 100
+      max_examples: 32
     lr_scheduler_type: cosine
     optim: adamw_torch_fused
     logging_steps: 1

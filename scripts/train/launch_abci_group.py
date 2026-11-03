@@ -81,13 +81,22 @@ def wait_runs(processes, directory):
     return results
 
 
-def environment(entry):
+def environment(entry, *, profile_video_frames=None):
     env = os.environ.copy()
     training = entry['train_gpu'] if isinstance(entry['train_gpu'], list) else [entry['train_gpu']]
     env.update(ABCI_TRAIN_GPU=','.join(map(str, training)), ABCI_EVAL_GPU=str(entry['eval_gpu']),
                ABCI_SERVER_PORT=str(entry['http_port']), TRIAGE_VLLM_GROUP_PORT=str(entry['group_port']),
-               ABCI_PROFILE_VIDEO_FRAMES='150',
                ABCI_FFMPEG_BIN=str(REPO.parent.parent / 'tools/ffmpeg/bin'))
+    if profile_video_frames is not None:
+        if type(profile_video_frames) is not int or profile_video_frames < 2:
+            raise ValueError('Measured profile_video_frames must be an integer of at least 2')
+        requested = env.get('ABCI_PROFILE_VIDEO_FRAMES')
+        if requested is not None:
+            if not requested.isascii() or not requested.isdigit() or int(requested) < profile_video_frames:
+                raise ValueError('ABCI_PROFILE_VIDEO_FRAMES must be an integer at least as large as '
+                                 f'the measured dataset bound ({profile_video_frames})')
+        else:
+            env['ABCI_PROFILE_VIDEO_FRAMES'] = str(profile_video_frames)
     return env
 
 
@@ -97,10 +106,17 @@ def interrupted(signum, frame):
 
 def worker(entry, directory):
     directory.mkdir(parents=True, exist_ok=True)
-    env = environment(entry)
     server = train = None
     code = 1
     try:
+        # Use the same project/container runtime as training, not host Python packages.
+        measured = subprocess.check_output(['bash', str(LAUNCHER), 'frame-bound', entry['config']],
+                                           cwd=REPO, env=environment(entry), text=True)
+        report = json.loads(measured)
+        env = environment(entry, profile_video_frames=report['profile_video_frames'])
+        report['effective_profile_video_frames'] = int(env['ABCI_PROFILE_VIDEO_FRAMES'])
+        (directory/'frame-bound.json').write_text(json.dumps(report, indent=2)+'\n')
+        print('Video frame profile: '+json.dumps(report), flush=True)
         with (directory/'server.log').open('w') as log:
             server = subprocess.Popen(['bash',str(LAUNCHER),'server',entry['config']],cwd=REPO,
                                       env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)

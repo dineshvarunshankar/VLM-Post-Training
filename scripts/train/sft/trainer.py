@@ -4,11 +4,15 @@ import time
 
 from trl import SFTTrainer
 from scripts.train.shared.vllm import SFTWeightSync
+from scripts.train.sft.gradient_safety import FiniteGradientMixin
+from scripts.train.sft.recovery import RecoveryCheckpointMixin
+from scripts.train.sft.health import PeriodicHealthMixin
 
 
-class MedicalSFTTrainer(SFTTrainer):
+class MedicalSFTTrainer(RecoveryCheckpointMixin, PeriodicHealthMixin, FiniteGradientMixin, SFTTrainer):
     def __init__(self, *args, medical_evaluator, vllm_server_url,
-                 train_sampling_plan=None, mixture_config=None, **kwargs):
+                 train_sampling_plan=None, mixture_config=None,
+                 recovery_policy=None, health_policy=None, **kwargs):
         if not callable(medical_evaluator) or not vllm_server_url:
             raise ValueError("SFT requires the shared medical evaluator and a vLLM server URL")
         self.train_sampling_plan = train_sampling_plan
@@ -22,6 +26,8 @@ class MedicalSFTTrainer(SFTTrainer):
         if isinstance(self.video_collator, AnswerOnlyCollator):
             self.video_collator.medical_token_metrics = True
         self.vllm_generation = SFTWeightSync(self, vllm_server_url)
+        self.configure_recovery(recovery_policy)
+        self.configure_health(health_policy)
 
     def _teacher_loss_loop(self, *args, **kwargs):
         """Collect diagnostics during the existing forward pass, without logits gathering."""
@@ -69,6 +75,7 @@ class MedicalSFTTrainer(SFTTrainer):
         return super().get_eval_dataloader(eval_dataset)
 
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
+        self.save_recovery_before_evaluation()
         dataset = self.eval_dataset if eval_dataset is None else eval_dataset
         if dataset is None or not len(dataset):
             raise ValueError("Medical validation cannot be empty")

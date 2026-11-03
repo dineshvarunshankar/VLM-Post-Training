@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 import signal
 import tempfile
@@ -115,6 +116,7 @@ class GroupTests(unittest.TestCase):
             server.write_text('from http.server import BaseHTTPRequestHandler, HTTPServer\nimport os\nclass Handler(BaseHTTPRequestHandler):\n def do_GET(self):\n  self.send_response(200); self.end_headers()\nHTTPServer(("127.0.0.1",int(os.environ["ABCI_SERVER_PORT"])),Handler).serve_forever()\n')
             launcher=root/'launch.sh'
             launcher.write_text(f'#!/bin/bash\nif [[ "$1" == server ]]; then exec {sys.executable} {server}; fi\nif [[ "$2" == bad ]]; then exit 9; fi\nsleep 1\nexit 0\n')
+            launcher.write_text(launcher.read_text().replace('#!/bin/bash\n', '#!/bin/bash\nif [[ "$1" == frame-bound ]]; then echo \'{"profile_video_frames":199,"split_sha256":{"train":"fixture"}}\'; exit 0; fi\n'))
             good=dict(fixture()['nodes']['a'][0],config='good',http_port=free_port())
             bad=dict(fixture()['nodes']['a'][1],config='bad',http_port=free_port())
             with patch('scripts.train.launch_abci_group.LAUNCHER',launcher), ThreadPoolExecutor(2) as pool:
@@ -124,3 +126,54 @@ class GroupTests(unittest.TestCase):
                 with socket.socket() as sock:
                     self.assertNotEqual(sock.connect_ex(('127.0.0.1',entry['http_port'])),0)
                 self.assertEqual((root/entry['config']/'exit-code').read_text().strip(),'0' if entry['config']=='good' else '9')
+
+
+class FrameProfileEnvironmentTests(unittest.TestCase):
+    def test_no_unverified_default_or_silent_explicit_override(self):
+        from scripts.train.launch_abci_group import environment
+        entry = fixture()['nodes']['a'][0]
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertNotIn('ABCI_PROFILE_VIDEO_FRAMES', environment(entry))
+            self.assertEqual(environment(entry, profile_video_frames=199)['ABCI_PROFILE_VIDEO_FRAMES'], '199')
+        with patch.dict(os.environ, {'ABCI_PROFILE_VIDEO_FRAMES': '250'}, clear=True):
+            self.assertEqual(environment(entry, profile_video_frames=199)['ABCI_PROFILE_VIDEO_FRAMES'], '250')
+        for value in ('150', '0', '-1', 'nan', '199.5', ''):
+            with self.subTest(value=value), patch.dict(os.environ, {'ABCI_PROFILE_VIDEO_FRAMES': value}, clear=True):
+                with self.assertRaisesRegex(ValueError, 'ABCI_PROFILE_VIDEO_FRAMES'):
+                    environment(entry, profile_video_frames=199)
+
+    def test_worker_measures_before_server_and_records_effective_bound(self):
+        import subprocess
+        import sys
+        from scripts.train.launch_abci_group import worker
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            launcher = root / 'launch.sh'
+            # The server deliberately exits: its saved environment proves ordering without GPU work.
+            launcher.write_text('#!/bin/bash\nset -e\n'
+                'if [[ "$1" == frame-bound ]]; then echo \'{"profile_video_frames":199,"split_sha256":{"test":"fixture"}}\'; exit 0; fi\n'
+                f'echo "$1:$ABCI_PROFILE_VIDEO_FRAMES" >> "{root}/calls"\nexit 9\n')
+            entry = fixture()['nodes']['a'][0]
+            with patch('scripts.train.launch_abci_group.LAUNCHER', launcher), patch.dict(os.environ, {'ABCI_PROFILE_VIDEO_FRAMES': '250'}):
+                with self.assertRaisesRegex(RuntimeError, 'server exited'):
+                    worker(entry, root/'output')
+            self.assertEqual((root/'calls').read_text().strip(), 'server:250')
+            report = json.loads((root/'output/frame-bound.json').read_text())
+            self.assertEqual(report['profile_video_frames'], 199)
+            self.assertEqual(report['effective_profile_video_frames'], 250)
+            self.assertEqual(report['split_sha256'], {'test': 'fixture'})
+            self.assertEqual((root/'output/exit-code').read_text(), '1\n')
+
+    def test_measurement_failure_prevents_server_and_records_failure(self):
+        import subprocess
+        from scripts.train.launch_abci_group import worker
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            launcher = root / 'launch.sh'
+            launcher.write_text('#!/bin/bash\nif [[ "$1" == frame-bound ]]; then echo "missing meta.json" >&2; exit 2; fi\n'
+                                f'touch "{root}/server-started"\nexit 9\n')
+            with patch('scripts.train.launch_abci_group.LAUNCHER', launcher):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    worker(fixture()['nodes']['a'][0], root/'output')
+            self.assertFalse((root/'server-started').exists())
+            self.assertEqual((root/'output/exit-code').read_text(), '1\n')

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run once inside an ABCI allocation; this script never submits a job.
 set -euo pipefail
-if [[ $# -ne 2 || ! "$1" =~ ^(check|server|train)$ ]]; then
-  echo "Usage: bash scripts/train/launch_abci.sh check|server|train RUN.yaml" >&2
+if [[ $# -ne 2 || ! "$1" =~ ^(check|server|train|frame-bound)$ ]]; then
+  echo "Usage: bash scripts/train/launch_abci.sh check|server|train|frame-bound RUN.yaml" >&2
   exit 2
 fi
 mode=$1
@@ -16,7 +16,7 @@ for device in "${training_devices[@]}"; do
   used_devices[$device]=1
 done
 [[ -z "${used_devices[$eval_gpu]:-}" ]] || { echo 'Training and evaluation GPUs must be distinct.' >&2; exit 2; }
-if [[ "$mode" != check ]]; then
+if [[ "$mode" != check && "$mode" != frame-bound ]]; then
   [[ -n "${PBS_JOBID:-}" ]] || { echo 'A PBS allocation is required.' >&2; exit 2; }
   [[ "${RTYPE:-}" == rt_HF ]] || { echo 'This launcher requires an exclusive rt_HF allocation.' >&2; exit 2; }
   [[ -d "${PBS_LOCALDIR:-}" && -w "$PBS_LOCALDIR" ]] || { echo 'PBS_LOCALDIR must be writable.' >&2; exit 2; }
@@ -37,7 +37,7 @@ mkdir -p "$tmp"
 export SINGULARITY_TMPDIR="$tmp"
 args=(exec --cleanenv --home "$runtime/home:$runtime/home" -B /groups:/groups)
 [[ -z "${PBS_LOCALDIR:-}" ]] || args+=(-B "$PBS_LOCALDIR:$PBS_LOCALDIR")
-[[ "$mode" == check ]] || args+=(--nv)
+[[ "$mode" == check || "$mode" == frame-bound ]] || args+=(--nv)
 # Pass only operational settings. Credentials are read from the run's project .env.
 exec singularity "${args[@]}" "$image" bash --noprofile --norc -s -- \
  "$mode" "$repo" "$work" "$venv" "$config" "$tmp" "${ABCI_PROFILE_VIDEO_FRAMES:-}" "${ABCI_FFMPEG_BIN:-}" "$train_gpu" "$eval_gpu" "${ABCI_SERVER_PORT:-}" "${TRIAGE_VLLM_GROUP_PORT:-51216}" <<'CONTAINER'
@@ -53,6 +53,10 @@ export TORCH_HOME="$work/cache/torch" TRITON_CACHE_DIR="$work/cache/triton/$(bas
 export LD_LIBRARY_PATH="${ffmpeg_bin:+$ffmpeg_bin/../lib:}/opt/hpcx/ucx/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false
 unset PYTHONPATH PYTHONHOME WANDB_API_KEY WANDB_BASE_URL
+if [[ "$mode" == frame-bound ]]; then
+  # Read selected inventory metadata before server launch; no decoding, model loading, or patching.
+  CUDA_VISIBLE_DEVICES="" exec python -m scripts.train.shared.frame_bound --config "$config" --output "$tmp/frame-bound.json"
+fi
 python - "$config" "$mode" "$train_gpu" "$eval_gpu" "$expected_port" <<'PY'
 import json, shutil, sys
 from pathlib import Path

@@ -111,8 +111,17 @@ def check_batch(collator, processor, examples):
 
 def build_training_config(output, train_args):
     from trl import SFTConfig
+    from scripts.train.shared.contracts import validate_sft_reliability
+
+    validate_sft_reliability(train_args)
+
+    if train_args.get("fsdp") and train_args.get("fsdp_config", {}).get("activation_checkpointing"):
+        from scripts.train.shared.checkpoint_rng import install
+        install()
 
     train_args = {"report_to": "none", **train_args}
+    train_args.pop('recovery', None)
+    train_args.pop('health_check', None)
     if train_args.pop('early_stopping', None) is not None:
         train_args['restore_callback_states_from_checkpoint'] = True
     train_args["per_device_eval_batch_size"] = 1
@@ -345,6 +354,8 @@ def main():
         vllm_server_url=args.vllm_server_url,
         train_sampling_plan=sampling_plan,
         mixture_config=config.get("mixture"),
+        recovery_policy=train_args.get("recovery"),
+        health_policy=train_args.get("health_check"),
     )
     if trainer.is_world_process_zero():
         save_run_metadata(
