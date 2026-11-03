@@ -14,6 +14,11 @@ from scripts.train.tests.test_cot_integration import run_config
 from scripts.train.rl.rollout.client import VideoRolloutClient
 
 SCHEMA = {'type':'object','properties':{'cue':{'type':'integer','enum':[0,1]}},'required':['cue'],'additionalProperties':False}
+CAMERA_SCHEMA = {'type':'object','properties':{
+    'aerial_top_down':{'type':'integer','enum':[0,1]},
+    'aerial_oblique':{'type':'integer','enum':[0,1]},
+    'ground_level':{'type':'integer','enum':[0,1]}},
+    'required':['aerial_top_down','aerial_oblique','ground_level'],'additionalProperties':False}
 SETTINGS = dict(do_sample=False,temperature=0,top_p=1,top_k=0,min_p=0,repetition_penalty=1,presence_penalty=0)
 
 class CoTSchemaPolicyTests(unittest.TestCase):
@@ -49,12 +54,26 @@ class CoTSchemaPolicyTests(unittest.TestCase):
         evaluator=object.__new__(CoTVLLMEvaluator)
         evaluator.catalog={'categories':{'medical':{'subcategories':{'observables':{'cues':[{'name':'cue'}]}}}}}
         medical={'task':'medical_vqa','reference':{'category':'medical'},'answer':'PRIVATE'}
-        camera={'task':'camera_view','reward_context':{'schema':SCHEMA},'answer':'PRIVATE'}
+        camera={'task':'camera_view','answer':'PRIVATE'}
         self.assertEqual(evaluator.answer_schema(medical),SCHEMA)
-        self.assertEqual(evaluator.answer_schema(camera),SCHEMA)
+        self.assertEqual(evaluator.answer_schema(camera),CAMERA_SCHEMA)
         self.assertIsNone(evaluator.answer_schema({'task':'scene_description'}))
         with self.assertRaisesRegex(ValueError,'Unsupported'):
             evaluator.answer_schema({'task':'counting'})
+
+    def test_camera_loader_rows_work_without_rl_reward_metadata(self):
+        from scripts.train.shared.cot_data import camera_rows
+        from scripts.train.shared.data import read_yaml
+        from scripts.train.tests.test_cot_data import fixture, REPO
+        config=compile_run(run_config())['experiment']
+        catalog=read_yaml(REPO/'scripts/train/configs/catalogs/RGB/label_catalog.yaml')
+        with tempfile.TemporaryDirectory() as directory:
+            _,medical=fixture(Path(directory))
+            camera,_=camera_rows(medical,catalog,config)
+        self.assertEqual(len(camera),1)
+        self.assertNotIn('reward_context',camera[0])
+        evaluator=object.__new__(CoTVLLMEvaluator)
+        self.assertEqual(evaluator.answer_schema(camera[0]),CAMERA_SCHEMA)
 
     def test_saved_generation_policy_records_constraints(self):
         config=compile_run(run_config())['experiment']
@@ -70,7 +89,7 @@ class CoTSchemaPolicyTests(unittest.TestCase):
         evaluator=CoTVLLMEvaluator(None,{},None,catalog,SETTINGS,'run',model_family='qwen3_5',experiment=config)
         medical=[{'reference':{'variant':source,'category':'medical'},'answer':'{"cue":1}'} for source in ('native','stabilized')]
         auxiliary=[{'task':'scene_description','reference':{},'answer':'A person.','teacher_available':True},
-                   {'task':'camera_view','reference':{},'answer':'{"cue":1}','teacher_available':True,'reward_context':{'schema':SCHEMA}}]
+                   {'task':'camera_view','reference':{},'answer':'{"aerial_top_down":1,"aerial_oblique":0,"ground_level":0}','teacher_available':True}]
         requests=[]
         def predict(trainer,rows,version,seeds,schemas):
             requests.append(schemas)
@@ -81,7 +100,7 @@ class CoTSchemaPolicyTests(unittest.TestCase):
             with patch.object(evaluator,'predict_many',side_effect=predict), patch('scripts.train.shared.cot_evaluation.gather_object',side_effect=lambda value:value):
                 metrics=evaluator._evaluate(trainer,medical,'test',time.monotonic(),None,auxiliary,{})
             report=json.loads((Path(directory)/'test-step-2.json').read_text())
-        self.assertEqual(requests,[[SCHEMA,SCHEMA],[None,SCHEMA]])
+        self.assertEqual(requests,[[SCHEMA,SCHEMA],[None,CAMERA_SCHEMA]])
         self.assertEqual(report['decoding']['constraint'],'final_answer_json_schema')
         self.assertEqual(metrics['test_examples'],2)
         self.assertEqual(metrics['test_invalid_rate'],0)

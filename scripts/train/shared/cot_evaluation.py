@@ -6,7 +6,8 @@ import time
 from accelerate.utils import gather_object
 
 from scripts.train.shared.cot_format import FORMATS, extract_cot_answer
-from scripts.train.shared.data import atomic_json
+from scripts.train.shared.data import atomic_json, read_yaml
+from scripts.train.shared.paths import ANSWER_ONLY_PROMPT_DIR
 from scripts.train.shared.decoding import answer_schema
 from scripts.train.shared.evaluation import MedicalVLLMEvaluator
 from scripts.train.shared.metrics import score_medical_evaluation
@@ -60,7 +61,8 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         if task == 'medical_vqa':
             return answer_schema(self.catalog['categories'][row['reference']['category']])
         if task == 'camera_view':
-            return row['reward_context']['schema']
+            # CoT uses direct SFT camera rows, without RL reward metadata.
+            return read_yaml(ANSWER_ONLY_PROMPT_DIR / 'RGB/camera_view.yaml')['response_schema']
         if task == 'scene_description':
             return None
         raise ValueError(f'Unsupported CoT evaluation task: {task}')
