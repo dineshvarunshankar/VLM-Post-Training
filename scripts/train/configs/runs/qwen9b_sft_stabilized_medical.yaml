@@ -1,8 +1,8 @@
 # ABCI smoke-test starting allocation: 1 training GPU + 1 separate vLLM GPU.
 schema_version: 2
 run:
-  name: qwen9b-stabilized-medical-2
-  date: '2026-11-01'
+  name: qwen9b-stabilized-medical-3
+  date: '2026-11-02'
 model: qwen3.5-9b
 answer_format: answer_only
 recipe: sft
@@ -135,7 +135,10 @@ sft:
       activation_checkpointing: true
       cpu_offload: false
       state_dict_type: FULL_STATE_DICT
-    num_train_epochs: 5
+    num_train_epochs: 8
+    early_stopping:
+      patience: 2
+      threshold: 0.0
     learning_rate: 0.0001
     per_device_train_batch_size: 1
     warmup_steps: 0.05

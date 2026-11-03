@@ -18,8 +18,11 @@ class ValidationLossTests(unittest.TestCase):
         rows = Dataset.from_list([{'input_ids': [1, 2, 3, 4],
                                   'labels': [-100, -100, 3, 4]}] * 3)
         def collate(examples):
-            return {key: torch.tensor([row[key] for row in examples])
-                    for key in ('input_ids', 'labels')}
+            batch = {key: torch.tensor([row[key] for row in examples])
+                     for key in ('input_ids', 'labels')}
+            batch['medical_token_groups'] = torch.tensor([[0, 0, 1, 2]] * len(examples))
+            batch['attention_mask'] = torch.ones_like(batch['input_ids'])
+            return batch
         # The repository uses an external multimodal processor; these tests use
         # a minimal tokenizer object and already prepared examples instead.
         from tokenizers import Tokenizer
@@ -45,13 +48,29 @@ class ValidationLossTests(unittest.TestCase):
                     vllm_server_url='http://unused')
             model.eval()
             with torch.no_grad():
-                expected = model(**collate([rows[0]])).loss.item()
+                inputs = collate([rows[0]])
+                inputs.pop('medical_token_groups')
+                outputs = model(**inputs)
+                expected = outputs.loss.item()
+                value_loss = torch.nn.functional.cross_entropy(outputs.logits[:, 1], torch.tensor([3])).item()
+                value_correct = float(outputs.logits[0, 1].argmax() == 3)
             model.train()
+            # The diagnostic metadata must never alter training loss or reach
+            # the model as an unexpected keyword argument.
+            with_metadata = trainer.compute_loss(model, collate([rows[0]]))
+            without_metadata = collate([rows[0]])
+            without_metadata.pop('medical_token_groups')
+            baseline = trainer.compute_loss(model, without_metadata)
+            torch.testing.assert_close(with_metadata, baseline)
             for prefix in ('eval', 'test'):
                 result = trainer.evaluate(metric_key_prefix=prefix)
                 self.assertIn(prefix+'_loss', result)
                 self.assertAlmostEqual(result[prefix+'_loss'], expected, places=5)
                 self.assertEqual(result[prefix+'_macro_f1'], .4)
+                self.assertEqual(result[prefix+'_medical_value_tokens'], 3)
+                self.assertEqual(result[prefix+'_medical_format_tokens'], 3)
+                self.assertAlmostEqual(result[prefix+'_medical_value_loss'], value_loss, places=5)
+                self.assertEqual(result[prefix+'_medical_value_accuracy'], value_correct)
                 self.assertTrue(model.training)
             self.assertEqual(len(captured), 2)
 

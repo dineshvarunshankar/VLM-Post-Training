@@ -18,7 +18,24 @@ class MedicalSFTTrainer(SFTTrainer):
         if self.is_deepspeed_enabled:
             raise ValueError("Evaluation weight transfer supports FSDP2 or unsharded models")
         self.video_collator = self.data_collator
+        from scripts.train.shared.collator import AnswerOnlyCollator
+        if isinstance(self.video_collator, AnswerOnlyCollator):
+            self.video_collator.medical_token_metrics = True
         self.vllm_generation = SFTWeightSync(self, vllm_server_url)
+
+    def _teacher_loss_loop(self, *args, **kwargs):
+        """Collect diagnostics during the existing forward pass, without logits gathering."""
+        self._medical_metric_totals = None
+        self._collect_medical_metrics = True
+        try:
+            output = self.evaluation_loop(*args, **kwargs)
+            if self._medical_metric_totals is not None:
+                from scripts.train.shared.medical_token_metrics import summarize
+                output.metrics.update(summarize(self._medical_metric_totals, kwargs['metric_key_prefix']))
+            return output
+        finally:
+            self._collect_medical_metrics = False
+            self._medical_metric_totals = None
 
     def _get_train_sampler(self, train_dataset=None):
         if self.train_sampling_plan is None:
@@ -64,7 +81,7 @@ class MedicalSFTTrainer(SFTTrainer):
         started = time.monotonic()
         was_training = self.model.training
         try:
-            output = self.evaluation_loop(
+            output = self._teacher_loss_loop(
                 self.get_eval_dataloader(dataset),
                 description="Answer-only validation loss",
                 prediction_loss_only=True,
@@ -75,6 +92,7 @@ class MedicalSFTTrainer(SFTTrainer):
             if loss_key not in output.metrics:
                 raise RuntimeError("Validation loss pass returned no loss")
             loss_metrics = {
+                **{k: v for k, v in output.metrics.items() if k.startswith(f'{metric_key_prefix}_medical_')},
                 loss_key: output.metrics[loss_key],
                 f"{metric_key_prefix}_loss_runtime": time.monotonic() - started,
             }
@@ -95,12 +113,13 @@ class MedicalSFTTrainer(SFTTrainer):
         try:
             if covered:
                 teachers = dataset.select(covered) if hasattr(dataset, "select") else [dataset[i] for i in covered]
-                output = self.evaluation_loop(self.get_eval_dataloader(teachers),
+                output = self._teacher_loss_loop(self.get_eval_dataloader(teachers),
                     description="Covered medical CoT teacher loss", prediction_loss_only=True,
                     ignore_keys=ignore_keys, metric_key_prefix=prefix)
                 if prefix + "_loss" not in output.metrics:
                     raise RuntimeError("Covered CoT validation loss pass returned no loss")
                 metrics[prefix + "_loss"] = output.metrics[prefix + "_loss"]
+                metrics.update({k: v for k, v in output.metrics.items() if k.startswith(prefix + '_medical_')})
             auxiliary = getattr(self.medical_evaluator, "teacher_caption_rows", lambda prefix: [])(prefix)
             metrics[prefix + "_caption_teacher_loss_covered"] = len(auxiliary)
             if auxiliary:
@@ -116,6 +135,7 @@ class MedicalSFTTrainer(SFTTrainer):
             self.model.train(was_training)
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        groups = inputs.pop('medical_token_groups', None)
         task_ids = inputs.pop("cot_task_ids", None)
         if task_ids is not None and model.training:
             import torch
@@ -125,7 +145,29 @@ class MedicalSFTTrainer(SFTTrainer):
             if not hasattr(self, "_cot_supervised_tokens"):
                 self._cot_supervised_tokens = counts.new_zeros(len(TASK_IDS))
             self._cot_supervised_tokens += counts
-        return super().compute_loss(model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch)
+        if groups is None or not getattr(self, '_collect_medical_metrics', False):
+            return super().compute_loss(model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch)
+        from scripts.train.shared.medical_token_metrics import batch_statistics
+        labels = inputs['labels']
+        captured = []
+        def capture(module, args, outputs):
+            if not captured:
+                captured.append(batch_statistics(outputs, labels, groups))
+        handle = model.register_forward_hook(capture)
+        try:
+            result = super().compute_loss(model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch)
+        finally:
+            handle.remove()
+        if not captured:
+            raise RuntimeError('Medical token diagnostics did not observe model outputs')
+        # Gather per-example rows so Accelerate drops duplicated final-batch
+        # samples before aggregation. Never average per-rank averages.
+        totals = self.accelerator.gather_for_metrics(captured[0]).sum(0)
+        if self._medical_metric_totals is None:
+            self._medical_metric_totals = totals
+        else:
+            self._medical_metric_totals += totals
+        return result
 
     def log(self, logs, *args, **kwargs):
         if hasattr(self, "_cot_supervised_tokens"):

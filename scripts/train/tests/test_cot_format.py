@@ -67,6 +67,7 @@ class CoTNativeMaskTests(unittest.TestCase):
                     family=module.model_family(AutoConfig.from_pretrained(METADATA/name,local_files_only=True))
                     video={'fps':2,'qwen':{'max_pixels':65536},'gemma':{'max_soft_tokens':70}}
                     collator=CoTCollator(processor,2,8192,spatial_options(processor,video),model_family=family,video_config=video)
+                    collator.medical_token_metrics = True
                     for example in (medical,caption,camera):
                         batch=collator([example])
                         ids=batch['input_ids'][0]; labels=batch['labels'][0]
@@ -77,9 +78,15 @@ class CoTNativeMaskTests(unittest.TestCase):
                         self.assertIn(example['answer'],text)
                         self.assertTrue(text.rstrip().endswith('<|im_end|>' if family=='qwen3_5' else '<turn|>'))
                         if example['task']=='medical_vqa':
+                            groups = batch['medical_token_groups'][0]
+                            value_text = processor.tokenizer.decode(ids[groups == 1])
+                            self.assertTrue((groups[labels == -100] == 0).all())
+                            self.assertNotIn('wrong', value_text)
+                            self.assertGreater(int((groups == 1).sum()), 0)
                             self.assertIn(example['reasoning'],text)
                             self.assertEqual(module.extract_cot_answer(text,model_family=family).answer,example['answer'])
                         else:
+                            self.assertEqual(int(batch['medical_token_groups'].sum()), 0)
                             self.assertNotIn('The view is inadequate',text)
                             self.assertNotIn('<|channel>thought',text)
                             self.assertNotIn('<think>',text)

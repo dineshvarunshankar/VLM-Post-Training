@@ -113,6 +113,8 @@ def build_training_config(output, train_args):
     from trl import SFTConfig
 
     train_args = {"report_to": "none", **train_args}
+    if train_args.pop('early_stopping', None) is not None:
+        train_args['restore_callback_states_from_checkpoint'] = True
     train_args["per_device_eval_batch_size"] = 1
     checkpointing = train_args.pop("gradient_checkpointing", not train_args.get("fsdp", False))
     return SFTConfig(
@@ -128,6 +130,17 @@ def build_training_config(output, train_args):
         max_length=None,  # The video collator enforces the configured limit without truncation.
         **train_args,
     )
+
+
+def build_callbacks(train_args):
+    from scripts.train.shared.contracts import validate_early_stopping
+    validate_early_stopping(train_args)
+    policy = train_args.get('early_stopping')
+    if policy is None:
+        return []
+    from transformers import EarlyStoppingCallback
+    return [EarlyStoppingCallback(early_stopping_patience=policy['patience'],
+                                  early_stopping_threshold=policy.get('threshold', 0.0))]
 
 
 def save_training_outputs(trainer, processor, output, result, test_dataset=None):
@@ -234,6 +247,7 @@ def main():
     if config["method"] != "lora":
         raise ValueError("This training script supports LoRA only")
     train_args = resolve_training_args(config, int(os.environ.get("WORLD_SIZE", "1")))
+    callbacks = build_callbacks(train_args)
     if args.max_steps is not None:
         if args.max_steps <= 0:
             raise ValueError("--max-steps must be positive")
@@ -314,6 +328,7 @@ def main():
         **evaluator_options,
     )
     trainer = MedicalSFTTrainer(
+        callbacks=callbacks,
         model=model,
         args=training,
         train_dataset=Dataset.from_list(splits["train"]),

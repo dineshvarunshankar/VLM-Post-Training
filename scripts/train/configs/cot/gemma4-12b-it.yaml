@@ -3,7 +3,7 @@
 # Generation budgets are initial configurable values; CPU inspection measures all covered target lengths.
 schema_version: 2
 run:
-  name: gemma4-12b-it-cot-medical-scene-camera-draft
+  name: gemma12b-native-stabilized-medical-scene-camera-cot-1
   date: '2026-11-02'
 model: gemma4-12b-it
 answer_format: cot
@@ -11,8 +11,8 @@ recipe: sft
 paths:
   media_root: null
   split_dir: null
-  weights_root: /REQUIRED_BEFORE_TRAINING/base-weights
-  output_root: /REQUIRED_BEFORE_TRAINING/finetuned
+  weights_root: /groups/gai51740/RBT3/dinesh_varun/triage/base-weights
+  output_root: /groups/gai51740/RBT3/dinesh_varun/triage/finetuned
   catalog: ../catalogs/RGB/label_catalog.yaml
   prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
 execution:
@@ -151,7 +151,7 @@ sft:
       cpu_offload: false
       state_dict_type: FULL_STATE_DICT
     num_train_epochs: 5
-    learning_rate: 0.0001
+    learning_rate: 0.00002
     per_device_train_batch_size: 1
     warmup_steps: 0.05
     weight_decay: 0.0

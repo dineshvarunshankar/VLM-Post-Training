@@ -2,7 +2,7 @@
 # Explicit media/split selection, immutable source manifest, and GPU smoke validation remain required.
 schema_version: 2
 run:
-  name: qwen3.8-27b-cot-medical-scene-camera-draft
+  name: qwen27b-native-stabilized-medical-scene-camera-cot-1
   date: '2026-11-02'
 model: qwen3.8-27b
 answer_format: cot
@@ -10,8 +10,8 @@ recipe: sft
 paths:
   media_root: null
   split_dir: null
-  weights_root: /REQUIRED_BEFORE_TRAINING/base-weights
-  output_root: /REQUIRED_BEFORE_TRAINING/finetuned
+  weights_root: /ocean/projects/cis240120p/kandiyap/triage/base-weights
+  output_root: /ocean/projects/cis240120p/kandiyap/triage/finetuned
   catalog: ../catalogs/RGB/label_catalog.yaml
   prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
 execution:
@@ -150,7 +150,10 @@ sft:
       activation_checkpointing: true
       cpu_offload: false
       state_dict_type: FULL_STATE_DICT
-    num_train_epochs: 5
+    num_train_epochs: 8
+    early_stopping:
+      patience: 2
+      threshold: 0.0
     learning_rate: 0.0001
     per_device_train_batch_size: 1
     warmup_steps: 0.05

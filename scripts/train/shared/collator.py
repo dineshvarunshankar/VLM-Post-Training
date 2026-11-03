@@ -95,7 +95,7 @@ class AnswerOnlyCollator:
     def enable_thinking(self, examples):
         return False
 
-    def target_tokens(self, example):
+    def target_suffix(self, example):
         messages = self.messages(example)
         assistant = {
             "role": "assistant",
@@ -133,7 +133,10 @@ class AnswerOnlyCollator:
             raise ValueError(
                 "Native template inserts content before the final answer; refusing to supervise hidden reasoning"
             )
-        target = self.processor.tokenizer(suffix, add_special_tokens=False)[
+        return suffix
+
+    def target_tokens(self, example):
+        target = self.processor.tokenizer(self.target_suffix(example), add_special_tokens=False)[
             "input_ids"
         ]
         if not target:
@@ -141,7 +144,20 @@ class AnswerOnlyCollator:
         return target
 
     def __call__(self, examples):
-        suffixes = [self.target_tokens(example) for example in examples]
+        groups = None
+        if getattr(self, 'medical_token_metrics', False):
+            from scripts.train.shared.medical_token_metrics import target_groups
+            suffixes, groups = [], []
+            for example in examples:
+                suffix = self.target_suffix(example)
+                encoded = self.processor.tokenizer(suffix, add_special_tokens=False, return_offsets_mapping=True)
+                if not encoded['input_ids']:
+                    raise ValueError('Empty assistant target')
+                suffixes.append(encoded['input_ids'])
+                groups.append(target_groups(suffix, example['answer'], encoded['offset_mapping'],
+                    medical=example.get('task', example.get('reference', {}).get('task', 'medical_vqa')) == 'medical_vqa'))
+        else:
+            suffixes = [self.target_tokens(example) for example in examples]
         # Decode each video once; the processor retains model-specific frame/timestamp handling.
         batch = self.prompt_batch(examples, padding_side="right")
         input_ids, attention = batch["input_ids"], batch["attention_mask"]
@@ -165,6 +181,7 @@ class AnswerOnlyCollator:
         )
         result_attention = attention.new_zeros((len(examples), width))
         labels = input_ids.new_full((len(examples), width), -100)
+        metric_groups = input_ids.new_zeros((len(examples), width)) if groups is not None else None
         typed = {key: batch[key].new_zeros((len(examples), width)) for key in fields}
         for i, (length, target) in enumerate(zip(lengths, suffixes)):
             length = int(length)
@@ -175,6 +192,8 @@ class AnswerOnlyCollator:
             )
             result_attention[i, : widths[i]] = 1
             labels[i, length : widths[i]] = result_ids[i, length : widths[i]]
+            if metric_groups is not None:
+                metric_groups[i, length : widths[i]] = torch.tensor(groups[i], device=input_ids.device)
             for key in fields:
                 typed[key][i, :length] = batch[key][i, selected]
         batch.update(
@@ -183,6 +202,8 @@ class AnswerOnlyCollator:
             labels=labels,
             **typed,
         )
+        if metric_groups is not None:
+            batch['medical_token_groups'] = metric_groups
         return batch
 
 
@@ -202,13 +223,10 @@ class CoTCollator(AnswerOnlyCollator):
             raise ValueError("Mixed thinking modes require microbatch size 1")
         return thinking.pop()
 
-    def target_tokens(self, example):
+    def target_suffix(self, example):
         from scripts.train.shared.cot_format import assistant_suffix
         _, suffix = assistant_suffix(self.processor, example, family=self.model_family)
-        target = self.processor.tokenizer(suffix, add_special_tokens=False)["input_ids"]
-        if not target:
-            raise ValueError("Empty assistant target")
-        return target
+        return suffix
 
     def __call__(self, examples):
         from scripts.train.shared.cot_format import TASK_IDS

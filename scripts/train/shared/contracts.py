@@ -112,6 +112,19 @@ SFT_FIELDS = ('fsdp fsdp_config num_train_epochs learning_rate per_device_train_
               'metric_for_best_model greater_is_better accelerator_config')
 
 
+def validate_early_stopping(train):
+    policy = train.get('early_stopping')
+    if policy is None:
+        return
+    keys(policy, 'patience', 'training.early_stopping', 'threshold')
+    number(policy['patience'], 'early_stopping.patience', integer=True, strict=True)
+    number(policy.get('threshold', 0.0), 'early_stopping.threshold')
+    if (train.get('load_best_model_at_end') is not True or train.get('eval_strategy') != 'epoch'
+            or train.get('save_strategy') != 'epoch' or train.get('metric_for_best_model') != 'macro_f1'
+            or train.get('greater_is_better') is not True):
+        raise ValueError('Early stopping requires epoch evaluation/saving and best medical macro_f1 selection')
+
+
 def validate_experiment(config, *, sft=False):
     """Validate the flattened experiment used by both direct and run-YAML entry points."""
     keys(config, 'method attention max_length video augmentation lora data_checks evaluation training',
@@ -161,7 +174,7 @@ def validate_experiment(config, *, sft=False):
     number(config['evaluation']['max_new_tokens'], 'evaluation.max_new_tokens', integer=True, strict=True)
     train = config['training']
     keys(train, 'seed ' + LOADER_FIELDS + (' ' + SFT_FIELDS if sft else ''), 'training',
-         'data_seed per_device_eval_batch_size gradient_checkpointing' if sft else 'data_seed')
+         'data_seed per_device_eval_batch_size gradient_checkpointing early_stopping' if sft else 'data_seed')
     for key in ('seed', 'data_seed', 'dataloader_num_workers'):
         if key in train and not (key == 'data_seed' and train[key] is None):
             number(train[key], 'training.' + key, integer=True)
@@ -174,6 +187,7 @@ def validate_experiment(config, *, sft=False):
         raise ValueError('Persistent workers require dataloader_num_workers > 0')
     if not sft:
         return
+    validate_early_stopping(train)
     if 'gradient_checkpointing' in train:
         boolean(train['gradient_checkpointing'], 'training.gradient_checkpointing')
         if train.get('fsdp') and train['gradient_checkpointing']:
