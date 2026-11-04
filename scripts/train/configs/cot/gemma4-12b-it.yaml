@@ -1,30 +1,34 @@
-# Editable draft. Supply media_root and split_dir explicitly; no dataset release is selected.
-# CPU inspection accepts these two paths as arguments. Review/pin the source manifest before training.
-# Generation budgets are initial configurable values; CPU inspection measures all covered target lengths.
+# Stabilized CoT SFT for ABCI. Pin the transferred dataset release before launch.
 schema_version: 2
 run:
-  name: gemma12b-native-stabilized-medical-scene-camera-cot-1
-  date: '2026-11-02'
+  name: gemma12b-stabilized-medical-scene-subject-check-cot-abci-8gpu-v1
+  date: '2026-11-03'
 model: gemma4-12b-it
 answer_format: cot
 recipe: sft
 paths:
-  media_root: null
-  split_dir: null
+  media_root: /groups/gai51740/RBT3/dinesh_varun/triage/datasets
+  split_dir: /groups/gai51740/RBT3/dinesh_varun/triage/datasets/08-train_val_test/2026-11-03/cot
   weights_root: /groups/gai51740/RBT3/dinesh_varun/triage/base-weights
   output_root: /groups/gai51740/RBT3/dinesh_varun/triage/finetuned
   catalog: ../catalogs/RGB/label_catalog.yaml
   prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
 execution:
-  training_gpus: 4
+  training_gpus: 8
   training_devices: null
-  vllm_server_url: http://127.0.0.1:8022
+  vllm_gpu_sharing: true
+  vllm_server_url: http://127.0.0.1:8000
   vllm_model_name: gemma4-12b-it
 dataset:
   modality: RGB
   sources:
-  - native
   - stabilized
+subject_check:
+  enabled: true
+  modality: rgb
+  include_existing_subject_labels: true
+  dataset: people_negatives_VK_20261102
+  image_processor_kwargs: {}
 mixture:
   strategy: all_medical_plus_auxiliary
   shuffle: true
@@ -37,7 +41,7 @@ mixture:
     context_sources:
     - native
   camera_view:
-    enabled: true
+    enabled: false
     sources:
     - native
     questions_per_video_per_epoch: 1
@@ -110,7 +114,7 @@ shared:
     bias: none
     use_rslora: false
   data_checks:
-    stabilized_coordinates_verified: true
+    stabilized_coordinates_verified: false
   evaluation:
     max_new_tokens: 1024
     request_timeout_seconds: 1800
@@ -122,10 +126,7 @@ shared:
       min_p: 0.0
       presence_penalty: 0.0
       repetition_penalty: 1.0
-    sources:
-    - native
-    - stabilized
-    aggregation: equal_source_macro_f1
+  # Validation and test inherit the stabilized-only dataset selection.
   seed: 42
   data_loading:
     dataloader_num_workers: 4
@@ -167,6 +168,10 @@ sft:
     health_check:
       every_n_steps: 100
       max_examples: 32
+      stop_on_deterioration:
+        loss_factor: 2.0
+        loss_delta: 0.5
+        consecutive_checks: 2
     lr_scheduler_type: cosine
     optim: adamw_torch_fused
     logging_steps: 1

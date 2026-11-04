@@ -23,7 +23,11 @@ repo=$(pwd -P)
 git diff --quiet HEAD -- scripts/train
 [[ -z $(git ls-files --others --exclude-standard scripts/train) ]]
 config=$(realpath "$ABCI_SFT_CONFIG")
-[[ -f "$config" && "$config" == "$repo/scripts/train/configs/runs/"* ]]
+[[ -f "$config" ]]
+case "$config" in
+  "$repo/scripts/train/configs/runs/"*|"$repo/scripts/train/configs/cot/"*) ;;
+  *) echo 'Select a run YAML under configs/runs or configs/cot.' >&2; exit 2 ;;
+esac
 work=$(cd "$repo/../.." && pwd)
 job_root="$work/runtime/vlm-post-training/jobs/$PBS_JOBID"
 mkdir -p "$(dirname "$job_root")"

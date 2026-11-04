@@ -1,0 +1,50 @@
+{
+  "runs": [
+    {
+      "config": "scripts/train/configs/cot/qwen3.5-9b.yaml",
+      "nodes": 1,
+      "reserved_gpus": 8,
+      "training_gpus": 8,
+      "evaluation_devices_on_first_node": [
+        4
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    },
+    {
+      "config": "scripts/train/configs/cot/gemma4-12b-it.yaml",
+      "nodes": 1,
+      "reserved_gpus": 8,
+      "training_gpus": 8,
+      "evaluation_devices_on_first_node": [
+        4
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    },
+    {
+      "config": "scripts/train/configs/cot/qwen3.8-27b.yaml",
+      "nodes": 2,
+      "reserved_gpus": 16,
+      "training_gpus": 16,
+      "evaluation_devices_on_first_node": [
+        4,
+        5
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    },
+    {
+      "config": "scripts/train/configs/cot/gemma4-31b-it.yaml",
+      "nodes": 2,
+      "reserved_gpus": 16,
+      "training_gpus": 16,
+      "evaluation_devices_on_first_node": [
+        4,
+        5
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    }
+  ]
+}

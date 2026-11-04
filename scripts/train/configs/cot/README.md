@@ -1,6 +1,9 @@
-These four CoT drafts preserve the existing medical split policy and add one scene caption per selected video.
+These four CoT drafts add one scene caption per selected video.
+Training, validation, and test select stabilized RGB videos only.
+RGB subject-check images and subject labels from the selected videos provide direct-answer auxiliary examples.
 Medical targets contain reasoning and final human-label JSON.
-Scene captions and native camera targets use direct answers.
+Scene captions use direct text. Subject checks use direct JSON.
+Camera viewpoint, counting, localization, individual-label questions, evidence points, and time-span tasks are disabled.
 Answer-only configurations keep their existing behavior.
 
 Qwen 9B and 27B use an eight-epoch limit with early-stopping patience two.
@@ -19,7 +22,8 @@ A token that contains a medical value and punctuation belongs to the value group
 The metrics use the existing medical teacher-loss pass and do not change the training objective.
 CoT teacher metrics cover only accepted teacher targets; generated medical F1 still covers all selected human rows.
 
-No dataset release is selected in these drafts.
+The selected split is `08-train_val_test/2026-11-03/cot` under the ABCI dataset root.
+The user is transferring the data. Release manifest paths and hashes remain unset until the transferred files are verified.
 The medical and caption generation budgets are 4096 and 1024 tokens.
 Medical generation uses the native vLLM `thinking_token_budget: 3064`.
 The configuration reserves 1024 tokens for the final answer and eight tokens as a conservative transition allowance.
@@ -27,7 +31,9 @@ Native markers and prompt continuation tokens also consume this budget.
 The allowance is not a measured uniform tokenizer cost.
 The training context remains 262144 tokens, and full teacher targets remain unchanged.
 These values require corpus checks before a GPU pilot.
-The approved large-model recipes use 16 training GPUs, batch size 16, and microbatch size 1.
+The ABCI drafts use 8 training GPUs for Qwen 9B and Gemma 12B, and 16 for Qwen 27B and Gemma 31B.
+All four retain effective batch size 16 and microbatch size 1.
+Evaluation shares training GPUs between training phases. This allocation is not a measured optimum for the smaller models.
 Gemma 31B retains `flex_attention` and the shared evaluation-server layout.
 
 Run CPU inspection with an explicit dataset root, frozen split, and pinned local processor files:
@@ -79,8 +85,8 @@ The local HTML artifact supports review without changes to the active port 8767 
 
 Before a training review, set `cot.release_manifest` to the reviewed manifest path.
 Set `cot.release_manifest_sha256` to the file hash that inspection prints.
-Set the regenerated media and split paths. Weight and output roots are preset for ABCI (9B/12B) and PSC (27B/31B).
-The four new run identities end in `-medical-scene-camera-cot-1`; they do not reuse answer-only output directories.
+Media, split, weight, and output paths are preset for ABCI for all four models.
+Run identities include `cot-abci-8gpu-v1` or `cot-abci-16gpu-v1`. They do not reuse answer-only output directories.
 Training checks the current sources against the complete manifest.
 Manifest identity uses relative `dataset/`, `repository/`, and `splits/` namespaces.
 Physical roots remain separate diagnostics, so identical files retain their release identity across clusters.
@@ -122,3 +128,17 @@ An incompatible server fails before training starts. Do not modify an environmen
 The response parser still rejects missing keys, extra prose, malformed boundaries, and truncated output.
 Medical validation macro-F1 selects checkpoints; caption and camera results remain separate.
 Run metadata records these constraints. Resuming an older unconstrained CoT run with the new policy fails the existing metadata check.
+
+
+The current ABCI allocation file is `scripts/train/configs/abci/cot_shared_nodes.json`.
+Use `scripts/train/abci_sft_multinode.pbs` with one node for the smaller models and two nodes for the larger models.
+The older `cot_two_nodes.json` describes the superseded four-GPU dedicated-evaluation layout. Do not use it with these drafts.
+The shared launcher accepts committed YAML files under `configs/cot` and preserves the model-specific reasoning parser.
+
+Both Gemma drafts include the approved deterioration safeguard. Every 100 steps, it checks up to 32 fixed medical validation examples.
+It stops after two consecutive checks exceed both twice the best checked value loss and that value plus 0.5.
+It preserves the best checked recovery checkpoint and does not restart automatically. This safeguard does not prove that numerical instability is resolved.
+
+The selected tasks are medical CoT, one scene caption per stabilized video, and direct-answer RGB subject checks.
+Medical validation macro-F1 selects checkpoints. Caption and subject-check metrics remain separate.
+Dataset transfer and release verification remain pending. No CoT GPU job or full training run was started by this preparation.
