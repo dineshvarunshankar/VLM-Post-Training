@@ -99,6 +99,11 @@ def main():
             raise ValueError('PSC approved layout uses microbatch 1 and effective batch 16')
         build_callbacks(resolved)
         verify_server_runtime(run)
+        from scripts.train.storage.cloud_models import verify_local_source
+        model = plan['run']['model_settings']
+        weights = (Path(plan['run']['checkpoint']) if plan['run'].get('checkpoint') else
+                   Path(plan['run']['paths']['weights_root']) / model['repository'] / model['revision'])
+        verify_local_source(weights.expanduser().resolve(), model, check_hashes=False)
         root.mkdir(parents=True, exist_ok=False)
         write_bundle(plan, root / 'bundle')
         atomic_json(root / 'plan.json', plan)

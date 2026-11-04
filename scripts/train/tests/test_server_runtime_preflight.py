@@ -1,5 +1,7 @@
 """Reject missing server patches before creating a launch bundle or loading weights."""
 import subprocess
+import hashlib
+import json
 import sys
 import unittest
 import tempfile
@@ -58,6 +60,53 @@ class ServerRuntimePreflightTests(unittest.TestCase):
         with patch.object(launch.subprocess, 'run') as check:
             launch.verify_server_runtime({'answer_format': 'answer_only'})
         check.assert_not_called()
+
+
+class WeightProvenancePreflightTests(unittest.TestCase):
+    def prepare_fixture(self, base, with_manifest):
+        model = {'repository': 'google/gemma-4-31B-it', 'revision': 'pinned'}
+        weights = base / 'weights' / model['repository'] / model['revision']
+        weights.mkdir(parents=True)
+        payload = weights / 'config.json'
+        payload.write_bytes(b'{}')
+        if with_manifest:
+            (weights / 'cloud_source.json').write_text(json.dumps({**model, 'source': {}, 'files': {
+                'config.json': {'bytes': 2, 'sha256': hashlib.sha256(b'{}').hexdigest(),
+                                'mtime_ns': payload.stat().st_mtime_ns}}}))
+        run = {'model': 'gemma4-31b-it', 'model_settings': model, 'recipe': 'sft',
+               'answer_format': 'answer_only', 'env_file': 'unused',
+               'paths': {'weights_root': str(base / 'weights')},
+               'execution': {'training_gpus': 16, 'vllm_gpu_sharing': True}}
+        root = base / 'run'
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(sys, 'argv', ['launch', 'prepare', '--scheduler', 'pbs',
+                '--allocated-nodes', '2', '--config', 'unused', '--job-root', str(root), '--master', 'node']))
+            stack.enter_context(patch('scripts.train.shared.run_config.load_run', return_value=run))
+            stack.enter_context(patch('scripts.train.shared.run_config.compile_run',
+                return_value={'run': run, 'experiment': {}, 'stages': [{}]}))
+            stack.enter_context(patch('scripts.train.run.preflight'))
+            writer = stack.enter_context(patch('scripts.train.run.write_bundle'))
+            stack.enter_context(patch('dotenv.dotenv_values', return_value={'WANDB_API_KEY': 'test'}))
+            stack.enter_context(patch('scripts.train.sft.launch.resolve_training_args',
+                return_value={'per_device_train_batch_size': 1, 'gradient_accumulation_steps': 1}))
+            stack.enter_context(patch('scripts.train.sft.launch.build_callbacks'))
+            if with_manifest:
+                launch.main()
+                writer.assert_called_once()
+                self.assertTrue((root / 'plan.json').is_file())
+            else:
+                with self.assertRaises(FileNotFoundError):
+                    launch.main()
+                writer.assert_not_called()
+                self.assertFalse(root.exists())
+
+    def test_missing_manifest_blocks_prepare_before_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.prepare_fixture(Path(temporary), with_manifest=False)
+
+    def test_valid_manifest_allows_prepare(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.prepare_fixture(Path(temporary), with_manifest=True)
 
 
 if __name__ == '__main__':
