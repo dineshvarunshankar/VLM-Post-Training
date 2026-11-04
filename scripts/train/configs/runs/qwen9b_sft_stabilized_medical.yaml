@@ -1,7 +1,7 @@
 # Answer-only SFT: stabilized medical VQA; November 3 dataset release.
 schema_version: 2
 run:
-  name: qwen9b-stabilized-medical-subject-check-1
+  name: qwen9b-stabilized-medical-subject-check-abci-8gpu-v1
   date: '2026-11-03'
 model: qwen3.5-9b
 answer_format: answer_only
@@ -14,8 +14,9 @@ paths:
   catalog: ../catalogs/RGB/label_catalog.yaml
   prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
 execution:
-  training_gpus: 1
+  training_gpus: 8
   training_devices: null
+  vllm_gpu_sharing: true
   vllm_server_url: http://127.0.0.1:8000
   vllm_model_name: qwen3.5-9b
 dataset:

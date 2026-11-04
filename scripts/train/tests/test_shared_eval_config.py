@@ -7,6 +7,7 @@ class SharedEvalConfigTests(unittest.TestCase):
     def setUp(self):
         self.run = load_run('scripts/train/configs/runs/qwen9b_sft_stabilized_medical.yaml')
     def test_dedicated_default_has_no_sharing_flag(self):
+        self.run['execution'].pop('vllm_gpu_sharing', None)
         plan = compile_run(self.run)
         self.assertNotIn('--vllm-gpu-sharing', stage_command(plan, plan['stages'][0], Path('/tmp/bundle')))
     def test_sharing_is_explicit_and_reaches_sft(self):

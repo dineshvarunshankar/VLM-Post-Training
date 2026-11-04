@@ -1,7 +1,7 @@
 # Answer-only SFT: stabilized medical VQA; November 3 dataset release.
 schema_version: 2
 run:
-  name: gemma12b-stabilized-medical-subject-check-1
+  name: gemma12b-stabilized-medical-subject-check-abci-8gpu-v1
   date: '2026-11-03'
 model: gemma4-12b-it
 answer_format: answer_only
@@ -14,8 +14,9 @@ paths:
   catalog: ../catalogs/RGB/label_catalog.yaml
   prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
 execution:
-  training_gpus: 4
+  training_gpus: 8
   training_devices: null
+  vllm_gpu_sharing: true
   vllm_server_url: http://127.0.0.1:8013
   vllm_model_name: gemma4-12b-it
 dataset:

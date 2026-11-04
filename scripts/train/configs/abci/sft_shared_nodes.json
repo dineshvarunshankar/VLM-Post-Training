@@ -1,0 +1,50 @@
+{
+  "runs": [
+    {
+      "config": "scripts/train/configs/runs/qwen9b_sft_stabilized_medical.yaml",
+      "nodes": 1,
+      "reserved_gpus": 8,
+      "training_gpus": 8,
+      "evaluation_devices_on_first_node": [
+        4
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    },
+    {
+      "config": "scripts/train/configs/runs/gemma12b_sft_stabilized_medical.yaml",
+      "nodes": 1,
+      "reserved_gpus": 8,
+      "training_gpus": 8,
+      "evaluation_devices_on_first_node": [
+        4
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    },
+    {
+      "config": "scripts/train/configs/runs/qwen27b_sft_stabilized_medical.yaml",
+      "nodes": 2,
+      "reserved_gpus": 16,
+      "training_gpus": 16,
+      "evaluation_devices_on_first_node": [
+        4,
+        5
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    },
+    {
+      "config": "scripts/train/configs/runs/gemma31b_sft_stabilized_medical.yaml",
+      "nodes": 2,
+      "reserved_gpus": 16,
+      "training_gpus": 16,
+      "evaluation_devices_on_first_node": [
+        4,
+        5
+      ],
+      "evaluation_shared": true,
+      "unused_training_gpus": 0
+    }
+  ]
+}

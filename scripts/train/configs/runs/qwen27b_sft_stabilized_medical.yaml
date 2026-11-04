@@ -1,16 +1,16 @@
 # Answer-only SFT: stabilized medical VQA; November 3 dataset release.
 schema_version: 2
 run:
-  name: qwen27b-stabilized-medical-subject-check-psc-16gpu-v1
+  name: qwen27b-stabilized-medical-subject-check-abci-16gpu-v1
   date: '2026-11-03'
 model: qwen3.8-27b
 answer_format: answer_only
 recipe: sft
 paths:
-  media_root: /ocean/projects/cis240120p/shared/chiron_vlm_dataset
-  split_dir: /ocean/projects/cis240120p/shared/chiron_vlm_dataset/08-train_val_test/2026-11-03/answer_only
-  weights_root: /ocean/projects/cis240120p/kandiyap/triage/base-weights
-  output_root: /ocean/projects/cis240120p/kandiyap/triage/finetuned
+  media_root: /groups/gai51740/RBT3/dinesh_varun/triage/datasets
+  split_dir: /groups/gai51740/RBT3/dinesh_varun/triage/datasets/08-train_val_test/2026-11-03/answer_only
+  weights_root: /groups/gai51740/RBT3/dinesh_varun/triage/base-weights
+  output_root: /groups/gai51740/RBT3/dinesh_varun/triage/finetuned
   catalog: ../catalogs/RGB/label_catalog.yaml
   prompts: ../../prompts/answer_only/RGB/medical_vqa.yaml
 execution:

@@ -9,12 +9,14 @@ import shutil
 import sys
 import tempfile
 
-job = os.environ.get('SLURM_JOB_ID', '')
-if not job.isdigit():
-    raise SystemExit('A numeric Slurm job ID is required')
+job = os.environ.get('SLURM_JOB_ID') or os.environ.get('PBS_JOBID', '')
+if not job or not all(c.isalnum() or c in '.-_' for c in job):
+    raise SystemExit('A valid scheduler job ID is required')
 source = Path(importlib.util.find_spec('triton').origin).parent.resolve()
 version = importlib.metadata.version('triton')
-root = Path('/tmp') / ('triage-gemma-' + job)
+root = Path(os.environ.get('TRIAGE_TRITON_ROOT', str(Path('/tmp') / ('triage-gemma-' + job))))
+if not root.is_absolute():
+    raise SystemExit('Triton cache path must be absolute')
 root.mkdir(mode=0o700, parents=True, exist_ok=True)
 if root.stat().st_uid != os.getuid():
     raise SystemExit('Local cache is not owned by this user')

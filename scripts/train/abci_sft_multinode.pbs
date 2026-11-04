@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Submit with -v RTYPE=rt_HF,ABCI_SFT_CONFIG=...,ABCI_SFT_COMMIT=... and a current queue.
+#PBS -P gai51740
+#PBS -N triage-sft-shared
+#PBS -l select=2:mpiprocs=1
+#PBS -l walltime=168:00:00
+#PBS -j oe
+set -euo pipefail
+umask 077
+: "${PBS_JOBID:?A PBS allocation is required}"
+: "${PBS_NODEFILE:?A PBS node file is required}"
+: "${PBS_O_WORKDIR:?Submit from the committed repository}"
+: "${ABCI_SFT_CONFIG:?Set the repository-relative run YAML}"
+: "${ABCI_SFT_COMMIT:?Set the full reviewed commit}"
+[[ ${RTYPE:-} == rt_HF ]] || { echo 'An exclusive rt_HF allocation is required.' >&2; exit 2; }
+mapfile -t nodes < <(sort -u "$PBS_NODEFILE")
+expected_nodes=${ABCI_TRAIN_NODES:-2}
+[[ "$expected_nodes" == 1 || "$expected_nodes" == 2 ]]
+[[ ${#nodes[@]} == "$expected_nodes" ]] || { echo 'Expected two distinct nodes for a large model, or one for an eight-GPU model; set ABCI_TRAIN_NODES accordingly.' >&2; exit 2; }
+cd "$PBS_O_WORKDIR"
+repo=$(pwd -P)
+[[ $(git rev-parse HEAD) == "$ABCI_SFT_COMMIT" ]]
+git diff --quiet HEAD -- scripts/train
+[[ -z $(git ls-files --others --exclude-standard scripts/train) ]]
+config=$(realpath "$ABCI_SFT_CONFIG")
+[[ -f "$config" && "$config" == "$repo/scripts/train/configs/runs/"* ]]
+work=$(cd "$repo/../.." && pwd)
+job_root="$work/runtime/vlm-post-training/jobs/$PBS_JOBID"
+mkdir -p "$(dirname "$job_root")"
+mkdir "$job_root"
+printf '%s\n' "${nodes[@]}" > "$job_root/nodes"
+printf '%s\n' "$ABCI_SFT_COMMIT" > "$job_root/commit"
+module load hpcx/2.20
+master=$(head -n 1 "$PBS_NODEFILE")
+mpirun --bind-to none -np "$expected_nodes" -map-by ppr:1:node -hostfile "$PBS_NODEFILE" \
+  bash "$repo/scripts/train/abci_sft_node.sh" "$repo" "$config" "$job_root" "$master" "$PBS_JOBID" "$expected_nodes"
