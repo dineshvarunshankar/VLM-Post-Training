@@ -140,8 +140,8 @@ shared:
     caption_max_new_tokens: 1024
     caption_review_samples: 16
     accepted_implementation_fingerprints: []
-    release_manifest: null
-    release_manifest_sha256: null
+    release_manifest: /groups/gai51740/RBT3/dinesh_varun/triage/scratch/cot-repair-verification-c8716bb/source-manifest.json
+    release_manifest_sha256: fdc0a49a34cfaa5aa8569bb39995fb9d4713138a603e5a572bd7046f86f59026
 sft:
   effective_batch_size: 16
   training:
