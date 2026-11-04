@@ -27,6 +27,12 @@ def evaluation_arguments(run, scheduler='slurm'):
     return server_arguments(run)
 
 
+
+def verify_server_runtime(run):
+    """Check installed endpoint patches without modifying a shared environment."""
+    if run.get('answer_format') == 'cot' or run.get('subject_check', {}).get('enabled'):
+        subprocess.run([sys.executable, '-m', 'scripts.train.rl.rollout.patch'], check=True)
+
 def training_command(plan, stage_command, *, script, master, rank, job_id, python, scheduler='slurm'):
     nodes = validate_layout(plan['run'], scheduler)
     if rank not in tuple(str(i) for i in range(nodes)):
@@ -92,6 +98,7 @@ def main():
         if resolved['per_device_train_batch_size'] != 1 or resolved['gradient_accumulation_steps'] != 16 // run['execution']['training_gpus']:
             raise ValueError('PSC approved layout uses microbatch 1 and effective batch 16')
         build_callbacks(resolved)
+        verify_server_runtime(run)
         root.mkdir(parents=True, exist_ok=False)
         write_bundle(plan, root / 'bundle')
         atomic_json(root / 'plan.json', plan)

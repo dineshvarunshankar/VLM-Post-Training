@@ -9,13 +9,19 @@ if [[ ${1:-} != inside ]]; then
   work=$(cd "$repo/../.." && pwd)
   image=${ABCI_IMAGE:-/groups/gai51740/RBT3/singularity/pytorch-dev-25.08.sif}
   [[ -f "$image" && -x "$work/env/vlm-post-training/bin/python" ]]
-  mkdir -p "$job_root/home-$rank"
-  exec singularity exec --cleanenv --nv --home "$job_root/home-$rank:$job_root/home-$rank" -B /groups:/groups \
-    "$image" bash "$repo/scripts/train/abci_sft_node.sh" inside "$repo" "$config" "$job_root" "$master" "$job" "$rank" "$nodes" \
+  [[ ${PBS_LOCALDIR:-} == /* && -d "$PBS_LOCALDIR" && -w "$PBS_LOCALDIR" ]] || {
+    echo 'PBS_LOCALDIR must be an absolute writable scheduler scratch directory.' >&2; exit 2;
+  }
+  # Bind scheduler-managed node storage: container /tmp may be a small tmpfs.
+  local_cache="$PBS_LOCALDIR/sft-$rank"
+  mkdir -p "$job_root/home-$rank" "$local_cache"
+  export SINGULARITY_TMPDIR="$local_cache"
+  exec singularity exec --cleanenv --nv --home "$job_root/home-$rank:$job_root/home-$rank" -B /groups:/groups -B "$PBS_LOCALDIR:$PBS_LOCALDIR" \
+    "$image" bash "$repo/scripts/train/abci_sft_node.sh" inside "$repo" "$config" "$job_root" "$master" "$job" "$rank" "$nodes" "$local_cache" \
     > "$job_root/node-$rank.log" 2>&1
 fi
 shift
-repo=$1; config=$2; job_root=$3; master=$4; job=$5; rank=$6; nodes=$7
+repo=$1; config=$2; job_root=$3; master=$4; job=$5; rank=$6; nodes=$7; local_cache=${8:?Scheduler scratch path is missing}
 work=$(cd "$repo/../.." && pwd)
 cd "$repo"
 export PBS_JOBID="$job" TRIAGE_NODE_RANK="$rank"
@@ -24,7 +30,7 @@ export LD_LIBRARY_PATH="$work/tools/ffmpeg/lib:/opt/hpcx/ucx/lib${LD_LIBRARY_PAT
 export PYTHONPATH="$repo" HF_HOME="$work/cache/huggingface" HF_HUB_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=4 PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export TMPDIR="/tmp/triage-sft-$UID-$job"
+export TMPDIR="$local_cache"
 export TRIAGE_TRITON_ROOT="$TMPDIR" TRITON_CACHE_DIR="$TMPDIR/triton" TORCHINDUCTOR_CACHE_DIR="$TMPDIR/inductor"
 export CUDA_CACHE_PATH="$TMPDIR/cuda" VLLM_CACHE_ROOT="$TMPDIR/vllm"
 export TRIAGE_VLLM_GROUP_PORT=51216 VLLM_ENGINE_READY_TIMEOUT_S=3600
