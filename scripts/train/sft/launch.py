@@ -277,6 +277,9 @@ def main():
         train_args["max_steps"] = args.max_steps
     model_config = load_model_config(args)
     splits, sampling_plan, mixture_report = prepare_sft_data(args, config)
+    from scripts.train.shared.sft_dataset import build_sft_dataset
+    # Check the real Arrow boundary during inspection and before loading weights.
+    datasets = {name: build_sft_dataset(rows) for name, rows in splits.items()}
     print(
         json.dumps(
             {"model": model_config, "examples": {k: len(v) for k, v in splits.items()}},
@@ -300,7 +303,6 @@ def main():
         if not args.check_batch:
             verify_release_manifest(config, mixture_report)
 
-    from datasets import Dataset
     from scripts.train.sft.trainer import MedicalSFTTrainer
     from transformers import set_seed
 
@@ -366,8 +368,8 @@ def main():
         callbacks=callbacks,
         model=model,
         args=training,
-        train_dataset=Dataset.from_list(splits["train"]),
-        eval_dataset=Dataset.from_list(splits["validation"]),
+        train_dataset=datasets["train"],
+        eval_dataset=datasets["validation"],
         data_collator=collator,
         processing_class=processor,
         medical_evaluator=evaluator,
@@ -400,7 +402,7 @@ def main():
         return 2
     save_training_outputs(
         trainer, processor, output, result,
-        Dataset.from_list(splits["test"]) if splits["test"] else None,
+        datasets["test"] if splits["test"] else None,
     )
     return 0
 

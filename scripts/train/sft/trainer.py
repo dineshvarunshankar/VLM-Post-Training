@@ -130,8 +130,8 @@ class MedicalSFTTrainer(RecoveryCheckpointMixin, PeriodicHealthMixin, FiniteGrad
             auxiliary = getattr(self.medical_evaluator, "teacher_caption_rows", lambda prefix: [])(prefix)
             metrics[prefix + "_caption_teacher_loss_covered"] = len(auxiliary)
             if auxiliary:
-                from datasets import Dataset
-                teachers = Dataset.from_list(auxiliary)
+                from scripts.train.shared.sft_dataset import build_sft_dataset
+                teachers = build_sft_dataset(auxiliary)
                 output = self.evaluation_loop(self.get_eval_dataloader(teachers),
                     description="Covered caption teacher loss", prediction_loss_only=True,
                     ignore_keys=ignore_keys, metric_key_prefix=prefix + "_caption")
