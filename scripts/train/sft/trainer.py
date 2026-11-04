@@ -7,14 +7,16 @@ from scripts.train.shared.vllm import SFTWeightSync
 from scripts.train.sft.gradient_safety import FiniteGradientMixin
 from scripts.train.sft.recovery import RecoveryCheckpointMixin
 from scripts.train.sft.health import PeriodicHealthMixin
+from scripts.train.sft.continuation import ContinuationMixin
 
 
-class MedicalSFTTrainer(RecoveryCheckpointMixin, PeriodicHealthMixin, FiniteGradientMixin, SFTTrainer):
+class MedicalSFTTrainer(ContinuationMixin, RecoveryCheckpointMixin, PeriodicHealthMixin, FiniteGradientMixin, SFTTrainer):
     def __init__(self, *args, medical_evaluator, vllm_server_url,
                  train_sampling_plan=None, mixture_config=None,
-                 recovery_policy=None, health_policy=None, **kwargs):
+                 recovery_policy=None, health_policy=None, continuation_policy=None, **kwargs):
         if not callable(medical_evaluator) or not vllm_server_url:
             raise ValueError("SFT requires the shared medical evaluator and a vLLM server URL")
+        self.continuation_policy = continuation_policy
         self.train_sampling_plan = train_sampling_plan
         self.mixture_config = mixture_config or {"shuffle": True, "resample_each_epoch": False}
         self.medical_evaluator = medical_evaluator

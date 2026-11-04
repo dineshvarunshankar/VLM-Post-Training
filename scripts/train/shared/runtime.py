@@ -189,6 +189,9 @@ def save_run_metadata(
     if args.resume:
         previous_path = args.resume.resolve().parent.parent / "run.json"
         previous = json.loads(previous_path.read_text())
+        if "continuation" in config.get("training", {}):
+            from scripts.train.sft.continuation import save_continuation_metadata
+            return save_continuation_metadata(previous_path, run, args.resume)
         if previous != run:
             raise ValueError(
                 "Resume configuration, prompts, or split files differ from run.json"

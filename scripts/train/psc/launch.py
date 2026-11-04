@@ -68,7 +68,7 @@ def main():
     parser.add_argument('--expected-model', choices=('qwen3.5-9b', 'qwen3.8-27b', 'gemma4-12b-it', 'gemma4-31b-it'))
     args = parser.parse_args()
     from scripts.train.shared.run_config import load_run, compile_run
-    from scripts.train.run import preflight, write_bundle, child_environment, stage_command
+    from scripts.train.run import preflight, write_bundle, child_environment, stage_command, select_resume_stages
     from scripts.train.shared.data import atomic_json
     if args.mode == 'server-arguments':
         flags = evaluation_arguments(load_run(args.config), args.scheduler)
@@ -91,6 +91,7 @@ def main():
         if not dotenv_values(run['env_file']).get('WANDB_API_KEY'):
             raise ValueError('Project .env needs your WANDB_API_KEY; shared-account login is not used')
         plan = compile_run(run)
+        select_resume_stages(plan)
         preflight(plan)
         if len(plan['stages']) != 1 or plan['run']['recipe'] != 'sft':
             raise ValueError('PSC entrypoint requires one SFT stage')

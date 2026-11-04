@@ -114,6 +114,9 @@ SFT_FIELDS = ('fsdp fsdp_config num_train_epochs learning_rate per_device_train_
 
 def validate_sft_reliability(train):
     """Validate optional operational policies without altering training decisions."""
+    if 'continuation' in train:
+        from scripts.train.sft.continuation import validate_policy
+        validate_policy(train['continuation'])
     recovery = train.get('recovery')
     if recovery is not None:
         keys(recovery, 'before_evaluation save_steps save_total_limit', 'training.recovery')
@@ -200,7 +203,7 @@ def validate_experiment(config, *, sft=False):
     number(config['evaluation']['max_new_tokens'], 'evaluation.max_new_tokens', integer=True, strict=True)
     train = config['training']
     keys(train, 'seed ' + LOADER_FIELDS + (' ' + SFT_FIELDS if sft else ''), 'training',
-         'data_seed per_device_eval_batch_size gradient_checkpointing early_stopping recovery health_check' if sft else 'data_seed')
+         'data_seed per_device_eval_batch_size gradient_checkpointing early_stopping recovery health_check continuation' if sft else 'data_seed')
     for key in ('seed', 'data_seed', 'dataloader_num_workers'):
         if key in train and not (key == 'data_seed' and train[key] is None):
             number(train[key], 'training.' + key, integer=True)

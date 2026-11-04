@@ -77,7 +77,10 @@ def select_resume_stages(plan):
     previous_path = Path(checkpoint).parent.parent / 'run.json'
     previous = json.loads(previous_path.read_text())
     if previous.get('launch_config') != public_config(plan['run']):
-        raise ValueError('Resume requires the original run YAML settings; change only resume')
+        if 'continuation' not in plan['experiment'].get('training', {}):
+            raise ValueError('Resume requires the original run YAML settings; change only resume')
+        from scripts.train.sft.continuation import validate_launch_extension
+        validate_launch_extension(previous.get('launch_config'), public_config(plan['run']))
     stage_name = previous['run_location']['recipe']
     index = next((i for i, stage in enumerate(plan['stages']) if stage['recipe'] == stage_name), None)
     if index is None:
@@ -86,6 +89,13 @@ def select_resume_stages(plan):
     if Path(plan['stages'][0]['output']).resolve() != previous_path.parent.resolve():
         raise ValueError('Resume checkpoint must belong to the configured output directory')
     plan['stages'][0]['resume'] = checkpoint
+    if 'continuation' in plan['experiment'].get('training', {}):
+        from scripts.train.sft.continuation import validate_checkpoint, validate_completion_outputs
+        validate_checkpoint(checkpoint, fsdp=bool(plan['experiment']['training'].get('fsdp')),
+                            world_size=plan['run']['execution']['training_gpus'],
+                            require_health=bool(plan['experiment']['training'].get('health_check')),
+                            require_weights=True, policy=plan['experiment']['training']['continuation'])
+        validate_completion_outputs(previous_path.parent)
 
 
 def preflight(plan):

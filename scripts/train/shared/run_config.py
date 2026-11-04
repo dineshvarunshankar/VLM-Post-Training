@@ -175,6 +175,9 @@ def compile_run(config):
     if c.get('sft_run') and c['recipe'] != 'sft_then_rl':
         raise ValueError('sft_run is only valid for sft_then_rl')
     experiment = experiment_config(c)
+    if 'continuation' in experiment.get('training', {}):
+        if c['recipe'] != 'sft' or not c.get('resume'):
+            raise ValueError('Continuation requires SFT and an explicit resume checkpoint')
     validate_experiment(experiment, sft=c['recipe'] != 'rl_only' or c['schema_version'] == 1)
     experiment['dataset'] = dict(modality='RGB', sources={k: k in c['dataset']['sources'] for k in ('native', 'stabilized')})
     experiment['mixture'] = deepcopy(c['mixture'])

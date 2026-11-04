@@ -29,6 +29,8 @@ def configure_tracking(args, recipe, output, *, repository=None):
     os.environ['WANDB_MODE'] = mode
     identity = Path(output) / 'tracking' / 'run_id.json'
     if args.resume:
+        if getattr(args, "continuation_policy", None) is not None and not identity.is_file():
+            raise ValueError("Continuation requires the existing tracking/run_id.json")
         run_id = (json.loads(identity.read_text())['id'] if identity.exists()
                   else hashlib.sha256(name.encode()).hexdigest()[:24])
     else:
@@ -71,6 +73,12 @@ def add_tracking_metadata(trainer, output):
                     'catalog_sha256', 'prompts_sha256', 'split_sha256', 'data_sha256',
                 )}
             }, allow_val_change=True)
+            continuation = getattr(trainer, "continuation_metadata", None)
+            if continuation is not None:
+                wandb.config.update({"triage_continuation": {
+                    "provenance": continuation,
+                    "schedule": trainer.continuation_schedule,
+                }}, allow_val_change=True)
 
     trainer.add_callback(RunMetadataCallback())
 

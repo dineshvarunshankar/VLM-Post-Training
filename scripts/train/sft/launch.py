@@ -122,6 +122,7 @@ def build_training_config(output, train_args):
     train_args = {"report_to": "none", **train_args}
     train_args.pop('recovery', None)
     train_args.pop('health_check', None)
+    train_args.pop('continuation', None)
     if train_args.pop('early_stopping', None) is not None:
         train_args['restore_callback_states_from_checkpoint'] = True
     train_args["per_device_eval_batch_size"] = 1
@@ -328,6 +329,16 @@ def main():
         from scripts.train.shared.cot_budget import PARSERS
         from scripts.train.shared.cot_format import model_family
         client.check_cot_schema_compatibility(PARSERS[model_family(checkpoint_config)])
+    args.continuation_policy = train_args.get("continuation")
+    if args.continuation_policy is not None:
+        if not args.resume:
+            raise ValueError("Continuation requires an explicit resume checkpoint")
+        from scripts.train.sft.continuation import validate_checkpoint, validate_completion_outputs
+        validate_checkpoint(args.resume, fsdp=bool(train_args.get("fsdp")),
+                            world_size=int(os.environ.get("WORLD_SIZE", "1")),
+                            require_health=bool(train_args.get("health_check")),
+                            require_weights=True, policy=args.continuation_policy)
+        validate_completion_outputs(args.resume.resolve().parent.parent)
     output = validate_runtime(args, model_config, answer_format=config.get("answer_format","answer_only"))
     evaluation_lifecycle = None
     if args.vllm_gpu_sharing:
@@ -378,9 +389,10 @@ def main():
         mixture_config=config.get("mixture"),
         recovery_policy=train_args.get("recovery"),
         health_policy=train_args.get("health_check"),
+        continuation_policy=train_args.get("continuation"),
     )
     if trainer.is_world_process_zero():
-        save_run_metadata(
+        trainer.continuation_metadata = save_run_metadata(
             args,
             output,
             model_config,
