@@ -55,7 +55,7 @@ class TransferPlan:
             list(pool.map(check, self.stamps.items()))
 
 
-def scan_directory(directory, *, medical_gt_only=False):
+def scan_directory(directory, *, medical_gt_only=False, exclude_subject_check=False):
     files, stamps = [], {}
 
     def visit(path):
@@ -67,6 +67,8 @@ def scan_directory(directory, *, medical_gt_only=False):
             stamps[path] = stamp(path)
         with os.scandir(path) as entries:
             for entry in entries:
+                if exclude_subject_check and path == directory and entry.name == 'subject_check':
+                    continue
                 if selected_gt and entry.name != 'medical_vqa.json':
                     continue
                 child = Path(entry.path)
@@ -83,13 +85,13 @@ def scan_directory(directory, *, medical_gt_only=False):
     return files, stamps
 
 
-def prepare_transfer(root, split):
+def prepare_transfer(root, split, *, include_subject_check=False):
     root, split = Path(root).resolve(), Path(split).absolute()
     if split.is_symlink() or not split.resolve().is_relative_to(root / '08-train_val_test'):
         raise ValueError('--split-dir must be inside media-root/08-train_val_test')
     split = split.resolve()
     manifest = PreparedManifest(root)
-    files, stamps = scan_directory(split)
+    files, stamps = scan_directory(split, exclude_subject_check=not include_subject_check)
     summary_path = split / 'summary.json'
     report = json.loads(summary_path.read_text())
     ids = {}
@@ -136,10 +138,19 @@ def prepare_transfer(root, split):
             gt = root / DATASETS[variant] / clip / 'GT/medical_vqa.json'
             if gt not in stamps:
                 raise ValueError(f'Missing GT for split clip: {gt}')
+    checksums = None
+    if include_subject_check:
+        from scripts.train.storage.subject_transfer import subject_transfer_files
+        subject_files = subject_transfer_files(root, split)
+        files.extend(subject_files)
+        stamps.update({path: stamp(path) for path in subject_files})
+        counts['subject_check_files'] = len(subject_files)
+        checksums = {str(path.relative_to(root)): {'bytes': stamps[path][0], 'sha256': digest(path)}
+                     for path in subject_files}
     manifest.verify_unchanged()
     files = sorted(set(files))
     return TransferPlan(root, [str(path.relative_to(root)) for path in files], stamps,
-                        counts, sum(stamps[path][0] for path in files))
+                        counts, sum(stamps[path][0] for path in files), checksums)
 
 
 def check_weight_files(root, records, preflight=False, check_hashes=True):
@@ -299,8 +310,11 @@ def main(argv=None):
     parser.add_argument('--workers', type=int, default=16, help='Concurrent cloud transfers (default: 16)')
     parser.add_argument('--inspect', action='store_true', help='Compare files and sizes with destination without copying')
     parser.add_argument('--rewrite', action='store_true', help='Transfer all selected cloud dataset files again, including unchanged files')
+    parser.add_argument('--include-subject-check', action='store_true', help='Include verified subject-check media and frozen split sidecars')
     args = parser.parse_args(argv)
     try:
+        if args.include_subject_check and args.weights_root is not None:
+            parser.error('--include-subject-check is only used with datasets')
         cloud_upload = args.destination.startswith('swift://')
         if args.rewrite and not (args.cloud_source or (cloud_upload and args.media_root)):
             parser.error('--rewrite requires a cloud dataset upload or download')
@@ -311,7 +325,7 @@ def main(argv=None):
         if args.cloud_source:
             if args.split_dir is not None or cloud_upload:
                 parser.error('--cloud-source requires a local destination and no --split-dir')
-            download_dataset(args.cloud_source, args.destination, workers=args.workers, inspect=args.inspect, rewrite=args.rewrite)
+            download_dataset(args.cloud_source, args.destination, workers=args.workers, inspect=args.inspect, rewrite=args.rewrite, include_subject_check=args.include_subject_check)
             return 0
         if args.weights_root is not None:
             if cloud_upload:
@@ -333,12 +347,12 @@ def main(argv=None):
             else:
                 validate_destination(args.destination, root)
             print('Checking prepared manifests, clip files, and split...', flush=True)
-            plan = prepare_transfer(root, split)
+            plan = prepare_transfer(root, split, include_subject_check=args.include_subject_check)
         for variant, count in plan.counts.items():
             print(f'{variant}: {count}' if plan.checksums is not None else f'{variant}: {count} prepared clips', flush=True)
         print(f'{len(plan.files):,} files; {plan.total_bytes / 1024**3:.2f} GiB source size', flush=True)
         if cloud_upload:
-            upload_dataset(plan, args.destination, workers=args.workers, inspect=args.inspect, rewrite=args.rewrite)
+            upload_dataset(plan, args.destination, workers=args.workers, inspect=args.inspect, rewrite=args.rewrite, include_subject_check=args.include_subject_check)
             return 0
         print('Preview: no files copied.' if args.inspect else 'Copying; existing destination files are not deleted.', flush=True)
         result = transfer(plan, args.destination, args.inspect)

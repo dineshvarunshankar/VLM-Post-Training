@@ -14,7 +14,9 @@ from scripts.train.rl.rollout.features import encode_video_features
 
 
 class MedicalVLLMEvaluator:
-    def __init__(self, client, feature_config, processor, catalog, generation, run_id, max_tokens=1024, *, experiment=None, medical_templates=None, lifecycle=None):
+    def __init__(self, client, feature_config, processor, catalog, generation, run_id, max_tokens=1024, *, experiment=None, medical_templates=None, lifecycle=None, subject_check_rows=None, subject_reasoning_parser=None):
+        self.subject_check_rows = subject_check_rows or {}
+        self.subject_reasoning_parser = subject_reasoning_parser
         self.lifecycle = lifecycle
         self.client, self.feature_config, self.processor = client, feature_config, processor
         self.catalog, self.generation, self.run_id = catalog, dict(generation), run_id
@@ -32,7 +34,7 @@ class MedicalVLLMEvaluator:
         if int(packet['attention_mask'].sum()) + self.max_tokens > trainer.video_collator.max_length:
             raise ValueError('Validation prompt and answer exceed the context budget')
         encoded = encode_video_features(packet, policy_version=version, **self.feature_config)
-        return encoded
+        return {"task": "subject_check", "packet": encoded} if row.get("task") == "subject_check" else encoded
 
     def predict(self, trainer, row, version, seed, schema):
         return self.predict_encoded(self.encode(trainer, row, version), version, seed, schema)
@@ -55,6 +57,12 @@ class MedicalVLLMEvaluator:
         return results
 
     def predict_encoded(self, encoded, version, seed, schema):
+        direct_options = {}
+        if encoded.get('task') == 'subject_check':
+            if self.subject_reasoning_parser not in ('qwen3', 'gemma4'):
+                raise ValueError('Subject-check generation requires a native reasoning parser')
+            direct_options = dict(enable_thinking=False, reasoning_parser=self.subject_reasoning_parser)
+            encoded = encoded['packet']
         settings = self.generation
         output = self.client.generate(
             [encoded], policy_version=version,
@@ -64,7 +72,7 @@ class MedicalVLLMEvaluator:
             presence_penalty=settings.get('presence_penalty', 0),
             min_p=settings['min_p'],
             max_tokens=self.max_tokens, seed=seed,
-            schemas=[schema],
+            schemas=[schema], **direct_options,
         )
         prediction = self.processor.tokenizer.decode(output['completion_ids'][0], skip_special_tokens=True)
         return prediction
@@ -90,6 +98,30 @@ class MedicalVLLMEvaluator:
     def _prediction_phase(self, label, operation):
         from scripts.train.shared.distributed_local_work import run_local_work
         return self._phase(label, lambda: run_local_work(label, operation))
+
+    def evaluate_subject_check(self, trainer, prefix, version, seed_offset):
+        from scripts.train.shared.subject_check import subject_check_schema
+        from scripts.train.shared.subject_check_evaluation import score_subject_check
+        split = 'test' if prefix == 'test' else 'validation'
+        subjects = self.subject_check_rows.get(split, [])
+        rank, world = trainer.accelerator.process_index, trainer.accelerator.num_processes
+        indices = list(range(rank, len(subjects), world))
+        rows = [subjects[i] for i in indices]
+        predictions = self._prediction_phase('subject check prediction', lambda: self.predict_many(
+            trainer, rows, version, [trainer.args.seed + seed_offset + i for i in indices],
+            [subject_check_schema() for row in rows]))
+        records = []
+        for index, row, prediction in zip(indices, rows, predictions):
+            record = dict(index=index, reference=row['reference'], answer=row['answer'])
+            if isinstance(prediction, dict):
+                record.update(prediction=prediction['answer'], raw_completion=prediction['raw'], diagnostics=prediction['diagnostics'])
+            else:
+                record['prediction'] = prediction
+            records.append(record)
+        records = sorted(gather_object(records), key=lambda row: row['index'])
+        if [r['index'] for r in records] != list(range(len(subjects))):
+            raise ValueError('Every subject-check heldout row must be evaluated exactly once')
+        return score_subject_check(records)
 
     def _evaluate(self, trainer, dataset, prefix, started, additional_metrics, auxiliary_rows, auxiliary_preparation):
         version = f'{self.run_id}:{prefix}:step-{trainer.state.global_step}'
@@ -135,6 +167,10 @@ class MedicalVLLMEvaluator:
         for source, tasks in report['auxiliary']['sources'].items():
             for task, values in tasks.items():
                 metrics[f'{prefix}_aux/{source}/{task}/score'] = values['score']
+        if self.subject_check_rows:
+            from scripts.train.shared.subject_check_evaluation import subject_metric_values
+            report['subject_check'] = self.evaluate_subject_check(trainer, prefix, version, len(dataset) + len(auxiliary_rows))
+            metrics.update(subject_metric_values(report['subject_check'], prefix))
         if additional_metrics:
             metrics.update(additional_metrics)
             report['metrics']['loss'] = additional_metrics[f'{prefix}_loss']

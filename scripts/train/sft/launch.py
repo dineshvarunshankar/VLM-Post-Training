@@ -153,6 +153,8 @@ def build_callbacks(train_args):
 
 
 def save_training_outputs(trainer, processor, output, result, test_dataset=None):
+    from scripts.train.shared.runtime import require_training_success
+    require_training_success(trainer)
     trainer.save_model(str(output / "adapter"))
     if trainer.is_world_process_zero():
         processor.save_pretrained(output / "adapter")
@@ -178,23 +180,28 @@ def save_training_outputs(trainer, processor, output, result, test_dataset=None)
 
 
 def _prepare_sft_data(args, config):
-    splits = select_medical_examples(
-        load_splits(
-            args.media_root,
-            args.split_dir,
-            args.catalog,
-            args.prompts,
-            sources=config.get("dataset", {}).get("sources"),
-            evaluation_sources=config.get("evaluation", {}).get("sources"),
-        ),
-        config,
+    medical_splits = load_splits(
+        args.media_root, args.split_dir, args.catalog, args.prompts,
+        sources=config.get('dataset', {}).get('sources'),
+        evaluation_sources=config.get('evaluation', {}).get('sources'),
     )
+    splits = select_medical_examples(medical_splits, config)
+    subject_splits, subject_report = None, None
+    if config.get('subject_check', {}).get('enabled'):
+        from scripts.train.shared.subject_check import load_subject_check_splits
+        subject_splits, subject_report = load_subject_check_splits(
+            args.media_root, args.split_dir, config, medical_splits, args.catalog, args.prompts)
     sampling_plan, mixture_report = None, None
     if config.get("answer_format") == "cot":
         from scripts.train.shared.cot_data import build_cot_splits, pin_split_membership
         splits, report = build_cot_splits(splits, media_root=args.media_root,
             catalog=read_yaml(args.catalog), config=config)
         pin_split_membership(report,args.split_dir)
+        if subject_splits is not None:
+            from scripts.train.shared.subject_check_evaluation import attach_subject_check, pin_subject_check_manifest
+            splits, sampling_plan, report = attach_subject_check(splits, report['sampling_plan'], report, subject_splits, subject_report)
+            pin_subject_check_manifest(report, args.media_root, args.split_dir)
+            return splits, sampling_plan, report
         return splits, report["sampling_plan"], report
     if "mixture" in config:
         from scripts.train.shared.auxiliary import build_mixture
@@ -220,6 +227,9 @@ def _prepare_sft_data(args, config):
                 indent=2,
             )
         )
+    if subject_splits is not None:
+        from scripts.train.shared.subject_check_evaluation import attach_subject_check
+        return attach_subject_check(splits, sampling_plan, mixture_report, subject_splits, subject_report)
     return splits, sampling_plan, mixture_report
 
 
@@ -273,6 +283,10 @@ def main():
             indent=2,
         )
     )
+    if config.get('subject_check', {}).get('enabled'):
+        print(json.dumps({'subject_check': mixture_report['subject_check'],
+                          'image_processor_kwargs': config['subject_check'].get('image_processor_kwargs', {}),
+                          'image_budget_policy': 'native processor defaults unless explicit image kwargs are configured'}, indent=2))
     if args.inspect:
         if config.get("answer_format") == "cot":
             print(json.dumps({"coverage":mixture_report,"example":splits["train"][0],
@@ -306,7 +320,9 @@ def main():
                                api_key=os.environ.get("VLLM_API_KEY"),
                                timeout=evaluation_request_timeout(config))
     client.check_compatibility()
-    if config.get('answer_format')=='cot':
+    if config.get('subject_check', {}).get('enabled'):
+        client.check_image_compatibility()
+    if config.get('answer_format')=='cot' or config.get('subject_check', {}).get('enabled'):
         from scripts.train.shared.cot_budget import PARSERS
         from scripts.train.shared.cot_format import model_family
         client.check_cot_schema_compatibility(PARSERS[model_family(checkpoint_config)])
@@ -327,7 +343,11 @@ def main():
 
     evaluation = evaluation_settings(config, model_config)
     evaluator_class = MedicalVLLMEvaluator
-    evaluator_options = {}
+    evaluator_options = {'subject_check_rows': (mixture_report or {}).get('subject_check_evaluation', {})}
+    if config.get('subject_check', {}).get('enabled'):
+        from scripts.train.shared.cot_budget import PARSERS
+        from scripts.train.shared.cot_format import model_family
+        evaluator_options['subject_reasoning_parser'] = PARSERS[model_family(checkpoint_config)]
     if config.get("answer_format") == "cot":
         from scripts.train.shared.cot_evaluation import CoTVLLMEvaluator
         from scripts.train.shared.cot_format import model_family
@@ -369,9 +389,15 @@ def main():
             mixture_report,
         )
     add_tracking_metadata(trainer, output)
-    result = trainer.train(
-        resume_from_checkpoint=str(args.resume) if args.resume else None
-    )
+    from scripts.train.sft.health import HealthDeteriorationStop
+    try:
+        result = trainer.train(
+            resume_from_checkpoint=str(args.resume) if args.resume else None
+        )
+    except HealthDeteriorationStop:
+        from scripts.train.shared.runtime import finish_deteriorated_training
+        finish_deteriorated_training(trainer)
+        return 2
     save_training_outputs(
         trainer, processor, output, result,
         Dataset.from_list(splits["test"]) if splits["test"] else None,

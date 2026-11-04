@@ -1,14 +1,14 @@
-# ABCI smoke-test starting allocation: 1 training GPU + 1 separate vLLM GPU.
+# Answer-only SFT: stabilized medical VQA; November 3 dataset release.
 schema_version: 2
 run:
-  name: qwen9b-stabilized-medical-3
-  date: '2026-11-02'
+  name: qwen9b-stabilized-medical-subject-check-1
+  date: '2026-11-03'
 model: qwen3.5-9b
 answer_format: answer_only
 recipe: sft
 paths:
   media_root: /groups/gai51740/RBT3/dinesh_varun/triage/datasets
-  split_dir: /groups/gai51740/RBT3/dinesh_varun/triage/datasets/08-train_val_test/2026-11-01/answer_only
+  split_dir: /groups/gai51740/RBT3/dinesh_varun/triage/datasets/08-train_val_test/2026-11-03/answer_only
   weights_root: /groups/gai51740/RBT3/dinesh_varun/triage/base-weights
   output_root: /groups/gai51740/RBT3/dinesh_varun/triage/finetuned
   catalog: ../catalogs/RGB/label_catalog.yaml
@@ -22,6 +22,13 @@ dataset:
   modality: RGB
   sources:
   - stabilized
+# RGB false-positive images plus subject labels from the selected stabilized videos.
+subject_check:
+  enabled: true
+  modality: rgb
+  include_existing_subject_labels: true
+  dataset: people_negatives_VK_20261102
+  image_processor_kwargs: {}
 mixture:
   strategy: all_medical_plus_auxiliary
   shuffle: true
@@ -108,6 +115,7 @@ shared:
     use_rslora: false
   data_checks:
     stabilized_coordinates_verified: false
+  # Validation/test inherit stabilized-only dataset.sources.
   evaluation:
     max_new_tokens: 1024
     generation:

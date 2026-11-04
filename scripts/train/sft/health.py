@@ -1,13 +1,14 @@
 """Fixed-subset teacher diagnostics, independent of checkpoint selection.
 
-Alerts are advisory: two consecutive medical-value losses above the first
-finite baseline produce a warning. This is a trend indicator, not a statistical
-significance test or a rule for stopping, saving, or resuming training.
+The optional stop policy compares medical-value loss against the best checked
+recoverable step. Legacy policies retain their advisory baseline warnings.
 """
 from collections import defaultdict, deque
 from contextlib import contextmanager
 import copy
 import logging
+import json
+from pathlib import Path
 import math
 import random
 import time
@@ -16,6 +17,10 @@ import numpy as np
 import torch
 
 logger = logging.getLogger(__name__)
+
+
+class HealthDeteriorationStop(RuntimeError):
+    """Training stopped deliberately; success export and test evaluation are invalid."""
 
 
 class PeriodicHealthMixin:
@@ -27,11 +32,16 @@ class PeriodicHealthMixin:
         self._health_above_baseline = 0
         self._health_eval_dataloaders = {}
         self.health_subset_indices = ()
+        self._health_state = None
         if policy is None:
             return
         for key in ('every_n_steps', 'max_examples'):
             if type(policy.get(key)) is not int or policy[key] < 1:
                 raise ValueError(f'Periodic health {key} must be a positive integer')
+        if policy.get('stop_on_deterioration') is not None:
+            from scripts.train.shared.contracts import validate_sft_reliability
+            validate_sft_reliability({'health_check': policy,
+                                     'recovery': getattr(self, '_recovery_policy', None)})
         dataset = self.eval_dataset
         if dataset is None or isinstance(dataset, dict):
             raise ValueError('Periodic health requires one validation dataset')
@@ -71,10 +81,114 @@ class PeriodicHealthMixin:
             'health_examples': len(selected),
             'health_strata_sampled': len(selected_strata),
         }
+        if policy.get('stop_on_deterioration') is not None:
+            if not selected:
+                raise ValueError('Deterioration protection requires eligible medical health examples')
+            from scripts.train.shared.runtime import data_fingerprint
+            self._health_state = {
+                'schema_version': 1, 'policy': copy.deepcopy(policy),
+                'subset_sha256': data_fingerprint(list(self._health_dataset)),
+                'subset_indices': list(selected), 'last_checked_step': None,
+                'best_step': None, 'best_value_loss': None, 'bad_checks': 0,
+                'stopped': False, 'stop_reason': None,
+            }
 
     def _maybe_log_save_evaluate(self, *args, **kwargs):
         self.run_periodic_health()
+        if self._health_stopped():
+            self._apply_health_stop()
+            return None
         return super()._maybe_log_save_evaluate(*args, **kwargs)
+
+    def _health_stopped(self):
+        return bool(getattr(self, '_health_state', None) and self._health_state['stopped'])
+
+    def _apply_health_stop(self):
+        self.control.should_training_stop = True
+        self.control.should_evaluate = False
+        self.control.should_save = False
+
+    def train(self, resume_from_checkpoint=None, *args, **kwargs):
+        if getattr(self, '_health_state', None) is not None:
+            if resume_from_checkpoint is True:
+                raise ValueError('Deterioration protection requires an explicit resume checkpoint')
+            if resume_from_checkpoint:
+                self.restore_health_state(resume_from_checkpoint)
+            if self._health_stopped():
+                raise HealthDeteriorationStop('Medical health deterioration: stopped checkpoint cannot resume training')
+        return super().train(resume_from_checkpoint=resume_from_checkpoint, *args, **kwargs)
+
+    def _run_epoch(self, *args, **kwargs):
+        # A recovery save precedes its health measurement. After an interrupted
+        # check, complete that check on the loaded weights before any update.
+        if getattr(self, '_health_state', None) is not None:
+            self.run_periodic_health()
+            if self._health_stopped():
+                self._apply_health_stop()
+                return None
+        return super()._run_epoch(*args, **kwargs)
+
+    def _finalize_training(self, *args, **kwargs):
+        # An exact epoch-boundary resume can skip _run_epoch entirely.
+        if getattr(self, '_health_state', None) is not None:
+            self.run_periodic_health()
+        if self._health_stopped():
+            self.is_in_train = False
+            raise HealthDeteriorationStop('Medical health deterioration: training stopped; no successful export or test completion')
+        return super()._finalize_training(*args, **kwargs)
+
+    def _save_checkpoint(self, model, trial):
+        result = super()._save_checkpoint(model, trial)
+        if getattr(self, '_health_state', None) is not None:
+            from scripts.train.shared.data import atomic_json
+            from scripts.train.sft.recovery import _save_phase
+            checkpoint = Path(self.args.output_dir) / f'checkpoint-{self.state.global_step}'
+            def write():
+                if self.is_world_process_zero():
+                    atomic_json(checkpoint / 'health_state.json', self._health_state)
+            _save_phase(write)
+        return result
+
+    def restore_health_state(self, checkpoint):
+        """Load this checkpoint's monitor state, never a later root-level baseline."""
+        from scripts.train.sft.recovery import _collective_error
+        restored, error = None, None
+        try:
+            checkpoint = Path(checkpoint)
+            restored = json.loads((checkpoint / 'health_state.json').read_text())
+            step = json.loads((checkpoint / 'trainer_state.json').read_text())['global_step']
+            expected = self._health_state
+            if not isinstance(restored, dict) or set(restored) != set(expected):
+                raise ValueError('Missing or malformed checkpoint health policy state')
+            if restored['schema_version'] != 1 or restored['policy'] != expected['policy']:
+                raise ValueError('Checkpoint health policy differs from configured policy')
+            if (restored['subset_sha256'] != expected['subset_sha256']
+                    or restored['subset_indices'] != expected['subset_indices']):
+                raise ValueError('Checkpoint health subset differs from configured subset')
+            last, best = restored['last_checked_step'], restored['best_step']
+            if ((last is not None and (type(last) is not int or not 0 < last <= step))
+                    or (best is not None and (type(best) is not int or last is None or not 0 < best <= last))
+                    or type(restored['bad_checks']) is not int or restored['bad_checks'] < 0
+                    or type(restored['stopped']) is not bool):
+                raise ValueError('Invalid checkpoint health step or confirmation state')
+            value = restored['best_value_loss']
+            if ((best is None) != (value is None)
+                    or (value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0))):
+                raise ValueError('Invalid checkpoint health baseline')
+            if restored['stopped'] and not isinstance(restored['stop_reason'], dict):
+                raise ValueError('Stopped checkpoint lacks deterioration reason')
+            future = [path for path in Path(self.args.output_dir).glob('checkpoint-*')
+                      if path.is_dir() and path.name.removeprefix('checkpoint-').isdigit()
+                      and int(path.name.removeprefix('checkpoint-')) > step]
+            if future:
+                raise ValueError('Explicit resume would collide with future ordinary checkpoints; '
+                                 'preserve them outside the active checkpoints directory before resuming')
+        except Exception as exc:
+            error = exc
+        _collective_error(error)
+        self.restore_health_recovery_state(restored, resume_step=step)
+        self._health_state = restored
+        self._health_last_step = restored['last_checked_step']
 
     @contextmanager
     def _health_isolation(self):
@@ -131,6 +245,9 @@ class PeriodicHealthMixin:
         policy = getattr(self, 'health_policy', None)
         if policy is None:
             return None
+        if self._health_stopped():
+            self._apply_health_stop()
+            return None
         step = self.state.global_step
         if step <= 0 or step % policy['every_n_steps'] or step == self._health_last_step:
             return None
@@ -150,6 +267,8 @@ class PeriodicHealthMixin:
                 metrics.update({key: value for key, value in output.metrics.items()
                                 if key == 'health_loss' or key.startswith('health_medical_')})
                 self._health_trends(metrics, step)
+            if self._health_state is not None:
+                self._update_health_protection(metrics, step)
             metrics['health_runtime'] = time.monotonic() - started
             # Keep the real tracking callbacks, but don't merge or clear the
             # epoch/training TRL buffers with this independent diagnostic log.
@@ -159,6 +278,8 @@ class PeriodicHealthMixin:
             self.callback_handler = handler
             self.optimizer = optimizer
             self.log(metrics)
+        if self._health_stopped():
+            self._apply_health_stop()
         return metrics
 
     def _health_trends(self, metrics, step):
@@ -193,8 +314,59 @@ class PeriodicHealthMixin:
             self._health_above_baseline = (self._health_above_baseline + 1
                 if metrics[value_key] > self._health_baselines[value_key] else 0)
             metrics['health_alert'] = int(self._health_above_baseline >= 2)
-            if metrics['health_alert']:
+            if metrics['health_alert'] and self._health_state is None:
                 logger.warning('Periodic health medical value loss is above its initial baseline '
                                'for %s consecutive checks at step %s; advisory trend only, training continues',
                                self._health_above_baseline, step)
         metrics['health_medical_value_loss_above_baseline_checks'] = self._health_above_baseline
+
+    def _update_health_protection(self, metrics, step):
+        """Persist one collective decision against the best recoverable check."""
+        import torch.distributed as distributed
+        from scripts.train.sft.recovery import _save_phase
+        from scripts.train.shared.data import atomic_json
+
+        state = copy.deepcopy(self._health_state)
+        policy = self.health_policy['stop_on_deterioration']
+        if not distributed.is_initialized() or distributed.get_rank() == 0:
+            state['last_checked_step'] = step
+            if metrics['health_invalid'] or metrics['health_unavailable']:
+                state['bad_checks'] = 0
+            else:
+                value = metrics['health_medical_value_loss']
+                best = state['best_value_loss']
+                if best is None or value < best:
+                    state.update(best_value_loss=value, best_step=step, bad_checks=0)
+                else:
+                    deteriorated = (value > best * policy['loss_factor']
+                                    and value > best + policy['loss_delta'])
+                    state['bad_checks'] = state['bad_checks'] + 1 if deteriorated else 0
+                    if state['bad_checks'] >= policy['consecutive_checks']:
+                        state['stopped'] = True
+                        state['stop_reason'] = {
+                            'kind': 'medical_value_loss_deterioration', 'global_step': step,
+                            'value_loss': value, 'best_value_loss': best,
+                            'best_step': state['best_step'], 'consecutive_checks': state['bad_checks'],
+                            'loss_factor': policy['loss_factor'], 'loss_delta': policy['loss_delta'],
+                        }
+        if distributed.is_available() and distributed.is_initialized():
+            payload = [state]
+            distributed.broadcast_object_list(payload, src=0)
+            state = payload[0]
+        self.publish_health_state(state, pin_best=state['best_step'] == step)
+        self._health_state = state
+        metrics.update(health_stopped=int(state['stopped']),
+                       health_deterioration_checks=state['bad_checks'],
+                       health_alert=int(state['bad_checks'] > 0))
+        if state['best_step'] is not None:
+            metrics.update(health_best_checked_step=state['best_step'],
+                           health_best_checked_value_loss=state['best_value_loss'])
+        if state['stopped']:
+            metrics['health_stop_reason'] = state['stop_reason']['kind']
+            def write_stop():
+                if self.is_world_process_zero():
+                    atomic_json(Path(self.args.output_dir).parent / 'health_stop.json',
+                                dict(status='stopped_deterioration', **state))
+            _save_phase(write_stop)
+            logger.error('Medical health deterioration confirmed at step %s; training stops, best checked step %s remains recoverable',
+                         step, state['best_step'])

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 
-def profiling_flags(processor, video_config, *, profile_video_frames, model_config):
+def profiling_flags(processor, video_config, *, profile_video_frames, model_config, subject_check=None):
     """Keep input processing unchanged; size the startup dummy separately."""
     from scripts.train.shared.video import spatial_options
 
@@ -17,6 +17,10 @@ def profiling_flags(processor, video_config, *, profile_video_frames, model_conf
     kwargs = spatial_options(processor, video_config)
     video = processor.video_processor
     limits = {'image': 0, 'video': {'count': 1}}
+    if subject_check and subject_check.get('enabled'):
+        from scripts.train.shared.image import image_options
+        kwargs.update(image_options(processor, subject_check.get('image_processor_kwargs', {})))
+        limits['image'] = 1
     if getattr(model_config, 'audio_config', None) is not None:
         limits['audio'] = 0
     if type(video).__name__.startswith('Gemma4'):
@@ -50,7 +54,7 @@ def main():
     profile['local_path'] = str(Path(config['paths']['weights_root']) / profile['repository'] / profile['revision'])
     checkpoint_config, processor, _ = build_processor(profile, experiment)
     result = profiling_flags(processor, experiment['video'], profile_video_frames=args.profile_video_frames,
-                             model_config=checkpoint_config)
+                             model_config=checkpoint_config, subject_check=experiment.get('subject_check'))
     print(json.dumps(result if args.field == 'all' else result[args.field], sort_keys=True))
 
 

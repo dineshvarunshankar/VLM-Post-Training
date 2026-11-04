@@ -63,6 +63,27 @@ class VideoRolloutClient:
             raise ValueError('Requested model is not advertised by the rollout server')
         self._checked = True
 
+    def check_image_compatibility(self):
+        """Require a live server configured to encode at least one native image."""
+        try:
+            info = self._request('GET', '/server_info', params={'config_format': 'json'})
+            settings = info['vllm_config']['model_config']['multimodal_config']
+            limits = settings['limit_per_prompt']
+            if not isinstance(limits, dict):
+                raise TypeError('Invalid multimodal limits')
+            # vLLM 0.30.0 MultiModalConfig.get_limit_per_prompt defaults an
+            # unspecified modality to 999; explicit limits serialize as dataclasses.
+            image = limits.get('image', 999)
+            count = image.get('count') if isinstance(image, dict) else image
+            ready = (settings.get('language_model_only', False) is False
+                     and type(count) is int and count >= 1)
+        except (RuntimeError, KeyError, AttributeError, TypeError):
+            ready = False
+        if not ready:
+            raise ValueError('Subject-check evaluation requires native image capacity on the vLLM server. '
+                             'Start the future-run server with an image limit of at least one and expose '
+                             '/server_info?config_format=json before loading training weights.')
+
     def check_thinking_budget_compatibility(self, reasoning_parser):
         """Require initialized native reasoning markers; never assume server setup."""
         if reasoning_parser not in ('qwen3','gemma4'):

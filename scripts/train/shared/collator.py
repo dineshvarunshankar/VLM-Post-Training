@@ -1,6 +1,7 @@
 """Native multimodal prompts with loss restricted to the final JSON response."""
 
 import math
+from contextlib import nullcontext
 
 import torch
 from scripts.train.shared.video import capped_sampling, source_video_config, spatial_options, sample_capped_frames
@@ -8,7 +9,7 @@ from transformers.video_utils import VideoMetadata
 
 
 class AnswerOnlyCollator:
-    def __init__(self, processor, fps, max_length, processor_kwargs=None, *, video_config=None):
+    def __init__(self, processor, fps, max_length, processor_kwargs=None, *, video_config=None, image_processor_kwargs=None):
         if type(fps) not in (int, float) or not math.isfinite(fps) or not 0 < fps:
             raise ValueError("video.fps must be positive")
         self.video_config = video_config
@@ -16,6 +17,7 @@ class AnswerOnlyCollator:
         self.fps = fps
         self.max_length = max_length
         self.kwargs = dict(processor_kwargs or {})
+        self.image_kwargs = dict(image_processor_kwargs or {})
         reserved = {
             "text",
             "padding",
@@ -39,20 +41,30 @@ class AnswerOnlyCollator:
 
     @staticmethod
     def messages(example):
+        media = ("video" if example.get("media_type") is None else example["media_type"])
+        if media not in ("image", "video"):
+            raise ValueError(f"Unsupported media_type: {media!r}")
         return [
             {"role": "system", "content": example["system"]},
             {
                 "role": "user",
                 "content": [
-                    {"type": "video", "path": example["video"]},
+                    {"type": media, "path": example[media]},
                     {"type": "text", "text": example["question"]},
                 ],
             },
         ]
 
     def prompt_batch(self, examples, *, padding_side="left"):
+        media_types = {("video" if row.get("media_type") is None else row["media_type"]) for row in examples}
+        if len(media_types) != 1 or not media_types <= {"image", "video"}:
+            raise ValueError("Prompt batches require one supported media_type")
+        is_image = media_types == {"image"}
         fps, options = self.fps, self.kwargs
-        if self.video_config and self.video_config.get("sources"):
+        if is_image:
+            from scripts.train.shared.image import image_options
+            options = image_options(self.processor, self.image_kwargs)
+        if not is_image and self.video_config and self.video_config.get("sources"):
             if len(examples) != 1:
                 raise ValueError("Per-source video budgets currently require microbatch size 1")
             row = examples[0]
@@ -69,12 +81,12 @@ class AnswerOnlyCollator:
         previous = self.processor.tokenizer.padding_side
         self.processor.tokenizer.padding_side = padding_side
         try:
-            with capped_sampling(
+            with (nullcontext() if is_image else capped_sampling(
                 self.processor,
                 fps,
                 [row.get("required_frame_indices") or [] for row in examples],
                 [row.get("video_metadata") for row in examples],
-            ):
+            )):
                 return self.processor.apply_chat_template(
                     [self.messages(row) for row in examples],
                     tokenize=True,
@@ -83,7 +95,7 @@ class AnswerOnlyCollator:
                     return_dict=True,
                     return_tensors="pt",
                     processor_kwargs={
-                        "fps": fps,
+                        **({} if is_image else {"fps": fps}),
                         "padding": True,
                         "truncation": False,
                         **options,
@@ -158,7 +170,7 @@ class AnswerOnlyCollator:
                     medical=example.get('task', example.get('reference', {}).get('task', 'medical_vqa')) == 'medical_vqa'))
         else:
             suffixes = [self.target_tokens(example) for example in examples]
-        # Decode each video once; the processor retains model-specific frame/timestamp handling.
+        # Decode media once; the processor retains native image/video handling.
         batch = self.prompt_batch(examples, padding_side="right")
         input_ids, attention = batch["input_ids"], batch["attention_mask"]
         lengths = attention.sum(dim=1).tolist()
@@ -166,8 +178,8 @@ class AnswerOnlyCollator:
         width = max(widths)
         if width > self.max_length:
             raise ValueError(
-                f"Video + prompt + answer needs {width} tokens; maximum is {self.max_length}. "
-                "Adjust video FPS/resolution or context limit; inputs are never silently truncated."
+                f"Media + prompt + answer needs {width} tokens; maximum is {self.max_length}. "
+                "Adjust media resolution/video FPS or context limit; inputs are never silently truncated."
             )
         if "position_ids" in batch:
             raise ValueError(

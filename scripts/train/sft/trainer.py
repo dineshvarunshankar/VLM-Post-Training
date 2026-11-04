@@ -16,7 +16,7 @@ class MedicalSFTTrainer(RecoveryCheckpointMixin, PeriodicHealthMixin, FiniteGrad
         if not callable(medical_evaluator) or not vllm_server_url:
             raise ValueError("SFT requires the shared medical evaluator and a vLLM server URL")
         self.train_sampling_plan = train_sampling_plan
-        self.mixture_config = mixture_config
+        self.mixture_config = mixture_config or {"shuffle": True, "resample_each_epoch": False}
         self.medical_evaluator = medical_evaluator
         super().__init__(*args, **kwargs)
         if self.is_deepspeed_enabled:

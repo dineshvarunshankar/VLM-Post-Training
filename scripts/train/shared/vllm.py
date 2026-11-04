@@ -20,6 +20,7 @@ def feature_configuration(config, processor):
     else:
         raise ValueError(f'Unsupported rollout architecture: {kind}')
     return dict(model_type=kind, video_token_id=processor.video_token_id,
+                image_token_id=getattr(processor, "image_token_id", None),
                 vision_start_token_id=start, vision_end_token_id=end,
                 spatial_merge_size=getattr(config.vision_config, 'spatial_merge_size', None),
                 pooling_kernel_size=getattr(config.vision_config, 'pooling_kernel_size', None))

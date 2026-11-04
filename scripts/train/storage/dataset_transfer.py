@@ -29,12 +29,15 @@ def location(value):
     return container, prefix
 
 
-def validate_manifest(value):
+def validate_manifest(value, *, include_subject_check=False):
     if value.get('schema_version') not in (1, 2) or not isinstance(value.get('files'), dict) or not value['files']:
         raise ValueError('Invalid dataset transfer manifest')
     for name, record in value['files'].items():
         safe_relative(name)
-        if name.startswith('/') or name.split('/')[0] not in ROOTS:
+        if not include_subject_check and name.startswith('08-train_val_test/') and 'subject_check' in Path(name).parts:
+            raise ValueError('Subject-check snapshot requires --include-subject-check')
+        subject_path = name.startswith('10-other_datasets/people_negatives_VK_20261102/')
+        if name.startswith('/') or (name.split('/')[0] not in ROOTS and not (include_subject_check and subject_path)):
             raise ValueError(f'Unexpected dataset path: {name}')
         if not isinstance(record, dict) or type(record.get('bytes')) is not int or record['bytes'] < 0:
             raise ValueError(f'Invalid file size: {name}')
@@ -126,14 +129,14 @@ def put(client, url, path, record, md5, *, rewrite=False):
             time.sleep(2 ** attempt)
 
 
-def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False, rewrite=False):
+def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False, rewrite=False, include_subject_check=False):
     container, prefix = location(destination)
     source = source or SwiftSource()
     if not 1 <= workers <= 64:
         raise ValueError('workers must be between 1 and 64')
     plan.verify_unchanged()
     for name in plan.files:
-        validate_manifest({'schema_version': 1, 'files': {name: {'bytes': 0, 'sha256': '0'*64}}})
+        validate_manifest({'schema_version': 1, 'files': {name: {'bytes': 0, 'sha256': '0'*64}}}, include_subject_check=include_subject_check)
     if inspect:
         print(f'Cloud preview: {len(plan.files)} files to {destination}', flush=True)
         return
@@ -141,7 +144,7 @@ def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False,
     previous = source.session.get(url, timeout=(30, 60), allow_redirects=False)
     if previous.status_code not in (200, 404):
         raise ValueError(f'Manifest lookup failed (HTTP {previous.status_code})')
-    old = validate_manifest(previous.json()) if previous.status_code == 200 else {'files': {}}
+    old = validate_manifest(previous.json(), include_subject_check=include_subject_check) if previous.status_code == 200 else {'files': {}}
     previous_etag = previous.headers.get('ETag')
     if previous.status_code == 200 and not previous_etag:
         previous_etag = hashlib.md5(previous.content).hexdigest()
@@ -173,7 +176,7 @@ def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False,
 
     records = parallel(plan.files, send, workers, 'Uploaded')
     plan.verify_unchanged()
-    manifest = validate_manifest({'schema_version': 2, 'files': records})
+    manifest = validate_manifest({'schema_version': 2, 'files': records}, include_subject_check=include_subject_check)
     body = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
     if manifest != old or previous.status_code == 404:
         response = source.session.put(url, data=body, headers={
@@ -186,7 +189,7 @@ def upload_dataset(plan, destination, *, workers=16, source=None, inspect=False,
     return manifest
 
 
-def download_dataset(origin, destination, *, workers=16, source=None, inspect=False, rewrite=False):
+def download_dataset(origin, destination, *, workers=16, source=None, inspect=False, rewrite=False, include_subject_check=False):
     container, prefix = location(origin)
     source = source or SwiftSource()
     if not 1 <= workers <= 64:
@@ -196,7 +199,7 @@ def download_dataset(origin, destination, *, workers=16, source=None, inspect=Fa
         raise ValueError('Cloud download destination must be a local dataset directory')
     response = source.session.get(source.object_url(container, prefix+'/'+MANIFEST), timeout=(30, 60))
     response.raise_for_status()
-    manifest = validate_manifest(response.json())
+    manifest = validate_manifest(response.json(), include_subject_check=include_subject_check)
     for name in [MANIFEST, *manifest['files']]:
         local_file(root, name)
     if inspect:

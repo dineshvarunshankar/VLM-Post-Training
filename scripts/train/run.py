@@ -101,6 +101,11 @@ def preflight(plan):
     for name in ('train', 'validation', 'test'):
         if not (Path(c['paths']['split_dir']) / (name + '.jsonl')).is_file():
             raise ValueError(f'Missing {name}.jsonl in paths.split_dir')
+    if plan['experiment'].get('subject_check', {}).get('enabled', False):
+        from scripts.train.storage.subject_transfer import subject_transfer_files
+        subject_transfer_files(c['paths']['media_root'], c['paths']['split_dir'],
+                               include_existing_subject_labels=plan['experiment']['subject_check'].get(
+                                   'include_existing_subject_labels', True))
     if c.get('sft_run') and not Path(c['sft_run']).is_dir():
         raise ValueError('sft_run is not an existing directory')
     if c['resume'] and not (Path(c['resume']) / 'trainer_state.json').is_file():

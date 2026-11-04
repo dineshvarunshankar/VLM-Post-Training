@@ -30,6 +30,7 @@ def main():
         "--media-root", type=Path, default=media_root, required=media_root is None, help="Parent of 06 and 07"
     )
     parser.add_argument("--catalog", type=Path, required=True)
+    parser.add_argument("--include-subject-check", action="store_true", help="Also prepare human-reviewed subject-check image targets")
     parser.add_argument("--inspect", action="store_true", help="Report without writing")
     args = parser.parse_args()
     root = args.media_root.resolve()
@@ -100,6 +101,10 @@ def main():
                 counts["written"] += 1
             else:
                 counts["would_write"] += 1
+            if args.include_subject_check and "subject_type" in answers:
+                from scripts.train.shared.subject_check import prepare_video_subject_gt
+                status = prepare_video_subject_gt(clip, answers["subject_type"], value["source_hashes"], inspect=args.inspect)
+                counts["subject_check_" + status] += 1
             counts["categories"] += len(answers)
         except (OSError, ValueError, KeyError, TypeError) as error:
             counts["failed"] += 1
@@ -109,7 +114,15 @@ def main():
     except (OSError, ValueError) as error:
         counts['failed'] += 1
         errors.append({'reason': str(error)})
-    print(json.dumps({"counts": dict(counts), "issues": errors, "prepared_manifests": prepared_snapshot}, indent=2))
+    subject_report = None
+    if args.include_subject_check:
+        from scripts.train.shared.subject_check import prepare_negative_gt
+        try:
+            subject_report = prepare_negative_gt(root, inspect=args.inspect)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            counts["failed"] += 1
+            errors.append({"reason": str(error)})
+    print(json.dumps({"subject_check": subject_report, "counts": dict(counts), "issues": errors, "prepared_manifests": prepared_snapshot}, indent=2))
     return int(bool(counts["failed"]))
 
 

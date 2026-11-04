@@ -35,6 +35,7 @@ def load_training_config(path, _parents=()):
     validate_augmentation(config)
     validate_mixture(config)
     validate_cot_config(config)
+    validate_subject_check(config)
     if 'method' in config:
         from scripts.train.shared.contracts import validate_experiment
         validate_experiment(config, sft=config.get('recipe') == 'sft_only')
@@ -293,6 +294,33 @@ def validate_cot_config(config):
     camera = mixture["camera_view"]
     if camera["sources"] != ["native"] or camera["questions_per_video_per_epoch"] != 1:
         raise ValueError("CoT camera viewpoint must use one direct native-only target per video")
+
+
+def validate_subject_check(config):
+    """Keep the additive task disabled unless an explicit modality is selected."""
+    if 'subject_check' not in config:
+        return
+    policy = config['subject_check']
+    if not isinstance(policy, dict) or set(policy) - {'enabled', 'modality', 'include_existing_subject_labels', 'dataset', 'image_processor_kwargs'}:
+        raise ValueError('subject_check contains unsupported fields')
+    boolean(policy.get('enabled'), 'subject_check.enabled')
+    if policy['enabled'] or 'modality' in policy:
+        choices(policy.get('modality'), ['rgb', 'ir', 'both'], 'subject_check.modality')
+    boolean(policy.get('include_existing_subject_labels', True), 'subject_check.include_existing_subject_labels')
+    choices(policy.get('dataset', 'people_negatives_VK_20261102'), ['people_negatives_VK_20261102'], 'subject_check.dataset')
+    image_kwargs = policy.get('image_processor_kwargs', {})
+    if not isinstance(image_kwargs, dict) or set(image_kwargs) not in (set(), {'size'}, {'max_soft_tokens'}):
+        raise ValueError('subject_check.image_processor_kwargs permits native Qwen size or Gemma max_soft_tokens')
+    if 'size' in image_kwargs:
+        size = image_kwargs['size']
+        if (not isinstance(size, dict) or set(size) != {'shortest_edge', 'longest_edge'}
+                or any(type(value) is not int or value <= 0 for value in size.values())
+                or size['shortest_edge'] > size['longest_edge']):
+            raise ValueError('subject_check image size requires positive ordered pixel bounds')
+    if 'max_soft_tokens' in image_kwargs:
+        tokens = image_kwargs['max_soft_tokens']
+        if type(tokens) is not int or tokens not in (70, 140, 280, 560, 1120):
+            raise ValueError('subject_check image max_soft_tokens must be 70, 140, 280, 560, or 1120')
 
 
 if __name__ == "__main__":

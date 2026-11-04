@@ -53,6 +53,10 @@ def build_processor(model_config, config):
     processor = AutoProcessor.from_pretrained(location, **options)
     collator_class = AnswerOnlyCollator
     collator_options = {}
+    if config.get("subject_check", {}).get("enabled", False):
+        collator_options["image_processor_kwargs"] = dict(
+            config["subject_check"].get("image_processor_kwargs", {})
+        )
     if config.get('answer_format')=='cot':
         from scripts.train.shared.collator import CoTCollator
         from scripts.train.shared.cot_format import model_family

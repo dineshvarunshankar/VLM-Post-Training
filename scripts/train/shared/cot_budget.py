@@ -16,7 +16,7 @@ def validate_budget(settings):
 
 
 def server_arguments(run):
-    if run.get('answer_format','answer_only') != 'cot':
+    if run.get('answer_format','answer_only') != 'cot' and not run.get('subject_check', {}).get('enabled'):
         return []
     if run['model'] not in MODEL_PARSERS:
         raise ValueError('Unsupported model for CoT reasoning budget enforcement')
@@ -25,7 +25,7 @@ def server_arguments(run):
 
 def generation_policy(config, *, reasoning_parser):
     validate_budget(config['cot'])
-    return {
+    policy = {
         'enforcement':'vllm-0.30.0 native SamplingParams.thinking_token_budget',
         'medical_vqa':{'thinking':True,'max_new_tokens':config['cot']['medical_max_new_tokens'],
                        'constraint':'final_answer_json_schema',
@@ -35,3 +35,7 @@ def generation_policy(config, *, reasoning_parser):
         'scene_description':{'thinking':False,'constraint':'none','max_new_tokens':config['cot']['caption_max_new_tokens']},
         'camera_view':{'thinking':False,'constraint':'task_json_schema','max_new_tokens':config['evaluation']['max_new_tokens']},
     }
+    if config.get('subject_check', {}).get('enabled'):
+        policy['subject_check'] = {'thinking': False, 'constraint': 'task_json_schema',
+                                   'max_new_tokens': config['evaluation']['max_new_tokens']}
+    return policy

@@ -31,9 +31,27 @@ def arguments(argv=None):
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--workers', type=int, default=8, help='Concurrent annotation readers; no video decoding')
     parser.add_argument('--inspect', action='store_true', help='Print the proposed split without writing any files')
+    parser.add_argument('--attach-subject-check-to', type=Path, help='Attach subject references to an existing selected split without reselecting medical data')
+    parser.add_argument('--include-subject-check', action='store_true', help='Publish additive reviewed subject-check references')
+    parser.add_argument('--subject-check-modality', choices=['rgb', 'ir', 'both'])
+    parser.add_argument('--subject-check-split-policy', choices=['preserve','match-medical'], default='preserve',
+                        help='Keep original crop splits, or match shared recordings to the frozen medical split')
     parser.add_argument('--refresh', action='store_true', help='Replace an existing split after validation; keep identical results unchanged')
     args = parser.parse_args(argv)
     try:
+        if args.include_subject_check and args.subject_check_modality is None:
+            parser.error('--include-subject-check requires --subject-check-modality')
+        if args.attach_subject_check_to is not None:
+            if not args.include_subject_check:
+                parser.error('--attach-subject-check-to requires --include-subject-check')
+            if args.media_root is None:
+                parser.error('Provide --media-root or set TRIAGE_DATASET_ROOT')
+            args.media_root = args.media_root.expanduser().resolve()
+            args.attach_subject_check_to = args.attach_subject_check_to.expanduser().absolute()
+            if not args.attach_subject_check_to.is_dir():
+                parser.error('Attachment requires an existing selected split directory')
+            validate_destination(args.attach_subject_check_to, True)
+            return args
         if args.percentage is None:
             args.percentage = float((input('Percentage for each validation/test split [5]: ').strip() or '5') if sys.stdin.isatty() else 5)
         if args.modality is None:
@@ -81,7 +99,10 @@ def validate_destination(destination, refresh):
         raise ValueError(f'Answer-only split already exists: {destination}')
     if not destination.is_dir():
         raise ValueError(f'Split destination must be a directory: {destination}')
-    files = list(destination.iterdir())
+    files = [path for path in destination.iterdir() if path.name != 'subject_check']
+    sidecar = destination / 'subject_check'
+    if sidecar.exists() and (sidecar.is_symlink() or not sidecar.is_dir()):
+        raise ValueError('Subject sidecar must be a directory')
     if {path.name for path in files} != SPLIT_FILES or any(path.is_symlink() or not path.is_file() for path in files):
         raise ValueError(f'Refresh requires only the four split files; unexpected or missing files in: {destination}')
 
@@ -110,6 +131,8 @@ def publish_split(destination, selection, report, *, refresh=False):
             if destination.exists():
                 if all((destination / name).read_bytes() == (staging / name).read_bytes() for name in SPLIT_FILES):
                     return 'unchanged'
+                if (destination / 'subject_check').exists():
+                    raise ValueError('Cannot replace medical split with frozen subject-check references; choose a new split date')
                 previous = destination.with_name('.' + destination.name + '-rollback-' + uuid.uuid4().hex)
                 destination.rename(previous)
                 try:
@@ -129,6 +152,11 @@ def publish_split(destination, selection, report, *, refresh=False):
 def main(argv=None):
     args = arguments(argv)
     try:
+        if args.attach_subject_check_to is not None:
+            from scripts.train.shared.subject_check import prepare_subject_check_splits
+            report = prepare_subject_check_splits(args.media_root, args.attach_subject_check_to, modality=args.subject_check_modality, inspect=args.inspect, refresh=args.refresh, split_policy=args.subject_check_split_policy)
+            print(json.dumps({'subject_check': report}, indent=2))
+            return 0
         print('Reading prepared dataset manifests and annotations...', flush=True)
         candidates, metadata, inputs = load_inventory(args.media_root, args.catalog, args.modality,
                                                       args.workers)
@@ -141,6 +169,13 @@ def main(argv=None):
             verify_inputs(inputs, args.workers)
             status = publish_split(destination, selection, report, refresh=args.refresh)
             print(f'Split status: {status}')
+        if args.include_subject_check:
+            from scripts.train.shared.subject_check import prepare_subject_check_splits
+            if args.inspect and not destination.exists():
+                print('Subject-check inspection requires the selected medical split to exist; no files written.')
+            else:
+                subject_report = prepare_subject_check_splits(args.media_root, destination, modality=args.subject_check_modality, inspect=args.inspect, refresh=args.refresh, split_policy=args.subject_check_split_policy)
+                print(json.dumps({'subject_check': subject_report}, indent=2))
         print_report(report, destination, args.inspect)
         return 0
     except (OSError, ValueError, KeyError, TypeError) as error:

@@ -122,9 +122,17 @@ def validate_sft_reliability(train):
             number(recovery[key], 'recovery.' + key, integer=True, strict=True)
     health = train.get('health_check')
     if health is not None:
-        keys(health, 'every_n_steps max_examples', 'training.health_check')
+        keys(health, 'every_n_steps max_examples', 'training.health_check', 'stop_on_deterioration')
         for key in ('every_n_steps', 'max_examples'):
             number(health[key], 'health_check.' + key, integer=True, strict=True)
+        stop = health.get('stop_on_deterioration')
+        if stop is not None:
+            keys(stop, 'loss_factor loss_delta consecutive_checks', 'health_check.stop_on_deterioration')
+            number(stop['loss_factor'], 'health loss_factor', minimum=1, strict=True)
+            number(stop['loss_delta'], 'health loss_delta', strict=True)
+            number(stop['consecutive_checks'], 'health consecutive_checks', integer=True, strict=True)
+            if recovery is None or health['every_n_steps'] % recovery['save_steps']:
+                raise ValueError('Deterioration stopping requires recovery at every health check')
 
 
 def validate_early_stopping(train):
@@ -143,9 +151,10 @@ def validate_early_stopping(train):
 def validate_experiment(config, *, sft=False):
     """Validate the flattened experiment used by both direct and run-YAML entry points."""
     keys(config, 'method attention max_length video augmentation lora data_checks evaluation training',
-         'experiment', 'recipe effective_batch_size dataset mixture answer_format cot')
-    from scripts.train.shared.config import validate_cot_config
+         'experiment', 'recipe effective_batch_size dataset mixture answer_format cot subject_check')
+    from scripts.train.shared.config import validate_cot_config, validate_subject_check
     validate_cot_config(config)
+    validate_subject_check(config)
     fixed(config['method'], 'lora', 'method')
     if config['attention'] not in ('sdpa', 'eager', 'flash_attention_2', 'flash_attention_3', 'flex_attention'):
         raise ValueError('Unsupported attention implementation')

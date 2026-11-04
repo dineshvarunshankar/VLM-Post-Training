@@ -11,6 +11,21 @@ def row(source, prediction=1):
             'answer': '{"cue":1}', 'prediction': '{"cue":%d}' % prediction}
 
 class CommonEvaluationTests(unittest.TestCase):
+    def test_run_configs_evaluate_only_their_training_views(self):
+        from pathlib import Path
+        from scripts.train.shared.run_config import load_run, compile_run
+        for path in sorted(Path('scripts/train/configs/runs').glob('*.yaml')):
+            with self.subTest(run=path.name):
+                run = load_run(path)
+                config = compile_run(run)['experiment']
+                splits = {s: [row('native'), row('stabilized')]
+                          for s in ('train', 'validation', 'test')}
+                selected = select_medical_examples(splits, config)
+                expected = set(run['dataset']['sources'])
+                for split in ('train', 'validation', 'test'):
+                    self.assertEqual({r['reference']['variant'] for r in selected[split]},
+                                     expected, split)
+
     def test_training_sources_stay_independent(self):
         config = {'dataset': {'sources': {'native': False, 'stabilized': True}},
                   'mixture': {'medical_vqa': {'excluded_categories': [], 'context_sources': ['native']}},

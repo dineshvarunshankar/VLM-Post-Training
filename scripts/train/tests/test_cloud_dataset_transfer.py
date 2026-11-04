@@ -229,3 +229,19 @@ class CloudDatasetTransferTests(unittest.TestCase):
             self.assertFalse(self.dest.exists())
             self.assertEqual(transfer.main(args + ['--workers', '2']), 0)
         self.assertEqual((self.dest / self.name).read_bytes(), b'video-payload')
+
+    def test_subject_media_cloud_roundtrip_requires_explicit_opt_in(self):
+        name = '10-other_datasets/people_negatives_VK_20261102/rgb/box/image.jpg'
+        path = self.root / name
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'subject-image')
+        self.plan.files.append(name)
+        self.plan.stamps[path] = transfer.stamp(path)
+        with self.assertRaises(ValueError):
+            self.upload()
+        self.upload(include_subject_check=True)
+        with self.assertRaises(ValueError):
+            self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source)
+        self.assertFalse(self.dest.exists())
+        self.module().download_dataset('swift://bucket/snapshot', self.dest, source=self.source, include_subject_check=True)
+        self.assertEqual((self.dest / name).read_bytes(), b'subject-image')

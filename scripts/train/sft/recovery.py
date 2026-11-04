@@ -4,9 +4,11 @@ from copy import copy, deepcopy
 import json
 from pathlib import Path
 import shutil
+import tempfile
 
 
 RECOVERY_COMPLETE = 'recovery_complete.json'
+HEALTH_STATE = 'health_state.json'
 
 
 def _collective_error(error):
@@ -40,6 +42,107 @@ class RecoveryCheckpointMixin:
         self._recovery_policy = None if policy is None else dict(policy)
         self._recovery_last_step = None
         self._recovery_saving = False
+
+    def health_recovery_checkpoint(self, step):
+        """Return only a complete native checkpoint for the specified update."""
+        if type(step) is not int or step <= 0:
+            raise ValueError('A health checkpoint requires a positive optimizer step')
+        checkpoint = Path(self.args.output_dir).parent / 'recovery' / f'checkpoint-{step}'
+        try:
+            marker = json.loads((checkpoint / RECOVERY_COMPLETE).read_text())
+            saved = json.loads((checkpoint / 'trainer_state.json').read_text())
+            if (marker != {'schema_version': 1, 'global_step': step, 'completed': True}
+                    or type(saved.get('global_step')) is not int or saved['global_step'] != step):
+                raise ValueError('Recovery checkpoint step does not match its health check')
+        except (OSError, ValueError, TypeError) as exc:
+            raise ValueError(f'Health requires a completed recovery checkpoint at step {step}') from exc
+        return checkpoint
+
+    def _validate_health_pin(self, state):
+        """Validate checkpoint identity; the health mixin validates its schema."""
+        best = state.get('best_step')
+        if best is not None:
+            checked = state.get('last_checked_step')
+            if type(checked) is not int or type(best) is not int or best > checked:
+                raise ValueError('Best health checkpoint cannot follow the last health check')
+            self.health_recovery_checkpoint(best)
+        return best
+
+    def _rotate_recovery_checkpoints(self, root):
+        """Keep the latest rolling checkpoints plus the best checked update."""
+        pinned = None
+        state_file = root / HEALTH_STATE
+        if state_file.is_file():
+            pinned = self._validate_health_pin(json.loads(state_file.read_text()))
+        completed = sorted(
+            (path for path in root.glob('checkpoint-*')
+             if path.name.removeprefix('checkpoint-').isdigit()
+             and (path / RECOVERY_COMPLETE).is_file()),
+            key=lambda path: int(path.name.removeprefix('checkpoint-')),
+        )
+        retained = set(completed[-self._recovery_policy['save_total_limit']:])
+        if pinned is not None:
+            retained.add(root / f'checkpoint-{pinned}')
+        for old in completed:
+            if old not in retained:
+                shutil.rmtree(old)
+
+    def publish_health_state(self, state, *, pin_best=False):
+        """Attach a check to this update before atomically replacing the pin."""
+        from scripts.train.shared.data import atomic_json
+
+        def publish():
+            if not self.accelerator.is_main_process:
+                return
+            step = self.state.global_step
+            if type(state.get('last_checked_step')) is not int or state['last_checked_step'] != step:
+                raise ValueError('Health results must describe the current optimizer step')
+            checkpoint = self.health_recovery_checkpoint(step)
+            best = self._validate_health_pin(state)
+            root = checkpoint.parent
+            if pin_best:
+                if best != step:
+                    raise ValueError('A new best health checkpoint must be the checked update')
+            else:
+                state_file = root / HEALTH_STATE
+                previous = json.loads(state_file.read_text()) if state_file.exists() else {}
+                if best != previous.get('best_step'):
+                    raise ValueError('Changing the best health checkpoint requires pin_best=True')
+            # A failed root write leaves the previous pin protected. A resume
+            # from this completed checkpoint can still recover its own check.
+            atomic_json(checkpoint / HEALTH_STATE, state)
+            atomic_json(root / HEALTH_STATE, state)
+            self._rotate_recovery_checkpoints(root)
+
+        _save_phase(publish)
+
+    def restore_health_recovery_state(self, state, *, resume_step):
+        """Restore the caller's checkpoint-local history before any rotation."""
+        from scripts.train.shared.data import atomic_json
+
+        def restore():
+            if self.accelerator.is_main_process:
+                checked = state.get('last_checked_step')
+                if (type(resume_step) is not int or resume_step < 0
+                        or (checked is not None and (type(checked) is not int or checked > resume_step))):
+                    raise ValueError('Health history cannot follow the explicit resume checkpoint')
+                self._validate_health_pin(state)
+                root = Path(self.args.output_dir).parent / 'recovery'
+                future = sorted(path for path in root.glob('checkpoint-*')
+                                if path.is_dir() and path.name.removeprefix('checkpoint-').isdigit()
+                                and int(path.name.removeprefix('checkpoint-')) > resume_step)
+                if future:
+                    # Explicit rewind starts a new continuation. Keep old files
+                    # intact, but remove them from active retention and reuse.
+                    archive = Path(tempfile.mkdtemp(prefix='.superseded-', dir=root))
+                    prior_state = root / HEALTH_STATE
+                    if prior_state.is_file():
+                        atomic_json(archive / HEALTH_STATE, json.loads(prior_state.read_text()))
+                    for checkpoint in future:
+                        checkpoint.rename(archive / checkpoint.name)
+                atomic_json(root / HEALTH_STATE, state)
+
+        _save_phase(restore)
 
     def _maybe_log_save_evaluate(self, *args, **kwargs):
         policy = getattr(self, '_recovery_policy', None)
@@ -184,6 +287,14 @@ class RecoveryCheckpointMixin:
             if main_process:
                 try:
                     staged_checkpoint = staging / checkpoint.name
+                    from scripts.train.shared.data import atomic_json
+                    if hasattr(self, '_health_state'):
+                        health_state = self._health_state
+                    else:
+                        state_file = root / HEALTH_STATE
+                        health_state = json.loads(state_file.read_text()) if state_file.is_file() else None
+                    if health_state is not None:
+                        atomic_json(staged_checkpoint / HEALTH_STATE, health_state)
                     marker = staged_checkpoint / RECOVERY_COMPLETE
                     with marker.open('w') as stream:
                         json.dump({'schema_version': 1, 'global_step': step, 'completed': True}, stream)
@@ -192,14 +303,7 @@ class RecoveryCheckpointMixin:
                     # directory rename exposes state and marker atomically.
                     staged_checkpoint.rename(checkpoint)
                     shutil.rmtree(staging)
-                    completed = sorted(
-                        (path for path in root.glob('checkpoint-*')
-                         if path.name.removeprefix('checkpoint-').isdigit()
-                         and (path / RECOVERY_COMPLETE).is_file()),
-                        key=lambda path: int(path.name.removeprefix('checkpoint-')),
-                    )
-                    for old in completed[:-policy['save_total_limit']]:
-                        shutil.rmtree(old)
+                    self._rotate_recovery_checkpoints(root)
                 except Exception as exc:
                     error = exc
             _collective_error(error)

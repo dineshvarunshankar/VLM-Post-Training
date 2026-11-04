@@ -1,5 +1,6 @@
 """Shared run validation, resume checks, and metadata persistence."""
 
+import copy
 import hashlib
 import json
 import os
@@ -113,6 +114,22 @@ def validate_runtime(args, model_config, recipe="sft_only", *, answer_format="an
     return output
 
 
+def data_fingerprint(rows):
+    """Hash targets and provenance independently of local media mount paths."""
+    values = [{k: v for k, v in row.items() if k not in ("video", "image")} for row in rows]
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
+
+
+def metadata_mixture_report(report):
+    """Keep immutable media references without machine-specific row paths."""
+    saved = copy.deepcopy(report)
+    for rows in saved.get("subject_check_evaluation", {}).values():
+        for row in rows:
+            row.pop("image", None)
+            row.pop("video", None)
+    return saved
+
+
 def save_run_metadata(
     args,
     output,
@@ -137,15 +154,7 @@ def save_run_metadata(
         "training_arguments": train_args,
         "evaluation_backend": "vllm",
         "adapters": adapter_summary,
-        "data_sha256": {
-            name: hashlib.sha256(
-                json.dumps(
-                    [{k: v for k, v in row.items() if k != "video"} for row in rows],
-                    sort_keys=True,
-                ).encode()
-            ).hexdigest()
-            for name, rows in splits.items()
-        },
+        "data_sha256": {name: data_fingerprint(rows) for name, rows in splits.items()},
         "catalog_sha256": sha256(args.catalog),
         "prompts_sha256": sha256(args.prompts),
         "split_sha256": {
@@ -166,10 +175,17 @@ def save_run_metadata(
         run['launch_config'] = read_yaml(launch_config)
         reject_secrets(run['launch_config'])
     if mixture_report is not None:
-        run["mixture"] = mixture_report
+        run["mixture"] = metadata_mixture_report(mixture_report)
     if config.get("answer_format")=="cot":
         from scripts.train.shared.cot_budget import generation_policy, MODEL_PARSERS
         run["generation_budget_policy"] = generation_policy(config,reasoning_parser=MODEL_PARSERS[args.model])
+    if config.get("subject_check", {}).get("enabled", False):
+        from scripts.train.shared.cot_budget import MODEL_PARSERS
+        run["subject_check_generation_policy"] = {
+            "thinking": False, "constraint": "task_json_schema",
+            "max_new_tokens": config["evaluation"]["max_new_tokens"],
+            "reasoning_parser": MODEL_PARSERS[args.model],
+        }
     if args.resume:
         previous_path = args.resume.resolve().parent.parent / "run.json"
         previous = json.loads(previous_path.read_text())
@@ -195,8 +211,36 @@ def save_run_metadata(
 
 
 
+def require_training_success(trainer):
+    """Prevent stopped health runs from entering normal completion paths."""
+    state = getattr(trainer, '_health_state', None)
+    if state and state.get('stopped'):
+        from scripts.train.sft.health import HealthDeteriorationStop
+        raise HealthDeteriorationStop('Medical health deterioration: success export and held-out evaluation are blocked')
+
+
+def finish_deteriorated_training(trainer):
+    """Flush an explicit failed/stopped tracking status without success export."""
+    from scripts.train.sft.recovery import _save_phase
+    state = trainer._health_state
+    def finish():
+        if trainer.is_world_process_zero() and 'wandb' in trainer.args.report_to:
+            import wandb
+            if wandb.run is not None:
+                wandb.summary.update({
+                    'training_status': 'stopped_deterioration',
+                    'health_stop_reason': state['stop_reason'],
+                    'health_best_checked_step': state['best_step'],
+                    'health_best_checked_value_loss': state['best_value_loss'],
+                })
+                wandb.finish(exit_code=1)
+    _save_phase(finish)
+    trainer.accelerator.end_training()
+
+
 def finish_training_and_export(trainer, output):
     """Finish distributed work before rank zero performs the standalone CPU export."""
+    require_training_success(trainer)
     is_main = trainer.is_world_process_zero()
     trainer.accelerator.wait_for_everyone()
     from scripts.train.shared.tracking import finish_tracking
@@ -210,6 +254,7 @@ def finish_training_and_export(trainer, output):
 
 def evaluate_heldout(trainer, dataset, output):
     """Score the restored best checkpoint without using test scores for selection."""
+    require_training_success(trainer)
     if dataset is None or len(dataset) == 0:
         report = {'status': 'skipped', 'reason': 'No eligible held-out test examples'}
     else:

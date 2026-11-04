@@ -7,7 +7,7 @@ FORMATS = {
     'qwen3_5': {'opening':'<think>\n', 'boundary':'\n</think>\n\n', 'ending':'<|im_end|>'},
     'gemma4': {'opening':'<|channel>thought\n', 'boundary':'\n<channel|>', 'ending':'<turn|>'},
 }
-TASK_IDS = {'medical_vqa':0, 'scene_description':1, 'camera_view':2}
+TASK_IDS = {'medical_vqa':0, 'scene_description':1, 'camera_view':2, 'subject_check':3}
 
 
 def model_family(config):

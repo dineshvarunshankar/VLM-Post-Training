@@ -54,12 +54,15 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         return [r for r in rows if r['task']=='scene_description' and r['teacher_available']]
 
     def budget(self, task):
-        return self.caption_max_tokens if task=='scene_description' else self.camera_max_tokens if task=='camera_view' else self.max_tokens
+        return self.caption_max_tokens if task=='scene_description' else self.camera_max_tokens if task in ('camera_view', 'subject_check') else self.max_tokens
 
     def answer_schema(self, row):
         task = row.get('task', 'medical_vqa')
         if task == 'medical_vqa':
             return answer_schema(self.catalog['categories'][row['reference']['category']])
+        if task == 'subject_check':
+            from scripts.train.shared.subject_check import subject_check_schema
+            return subject_check_schema()
         if task == 'camera_view':
             # CoT uses direct SFT camera rows, without RL reward metadata.
             return read_yaml(ANSWER_ONLY_PROMPT_DIR / 'RGB/camera_view.yaml')['response_schema']
@@ -81,7 +84,7 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
     def predict_encoded(self, encoded, version, seed, schema):
         task = encoded.get('task','medical_vqa')
         packet = encoded.get('packet',encoded)
-        if task not in ('medical_vqa', 'camera_view', 'scene_description'):
+        if task not in ('medical_vqa', 'camera_view', 'scene_description', 'subject_check'):
             raise ValueError(f'Unsupported CoT evaluation task: {task}')
         if task != 'scene_description' and not isinstance(schema, dict):
             raise ValueError(f'{task} evaluation requires a task JSON schema')
@@ -162,6 +165,10 @@ class CoTVLLMEvaluator(MedicalVLLMEvaluator):
         metrics.update({f'{prefix}_cot/{key}':value for key,value in diagnostics.items()})
         if camera:
             metrics[f'{prefix}_aux/camera_view/exact_match'] = report['auxiliary']['camera_view']['exact_match']
+        if self.subject_check_rows:
+            from scripts.train.shared.subject_check_evaluation import subject_metric_values
+            report['subject_check'] = self.evaluate_subject_check(trainer, prefix, version, len(dataset) + len(auxiliary_rows))
+            metrics.update(subject_metric_values(report['subject_check'], prefix))
         if additional_metrics:
             metrics.update(additional_metrics)
             report['teacher_loss_metrics'] = additional_metrics

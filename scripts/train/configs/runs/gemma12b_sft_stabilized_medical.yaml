@@ -1,14 +1,14 @@
-# Starting allocation: 1 training GPU + 1 separate vLLM GPU; memory fit requires a smoke test.
+# Answer-only SFT: stabilized medical VQA; November 3 dataset release.
 schema_version: 2
 run:
-  name: gemma12b-stabilized-medical-2
-  date: '2026-11-02'
+  name: gemma12b-stabilized-medical-subject-check-1
+  date: '2026-11-03'
 model: gemma4-12b-it
 answer_format: answer_only
 recipe: sft
 paths:
   media_root: /groups/gai51740/RBT3/dinesh_varun/triage/datasets
-  split_dir: /groups/gai51740/RBT3/dinesh_varun/triage/datasets/08-train_val_test/2026-11-01/answer_only
+  split_dir: /groups/gai51740/RBT3/dinesh_varun/triage/datasets/08-train_val_test/2026-11-03/answer_only
   weights_root: /groups/gai51740/RBT3/dinesh_varun/triage/base-weights
   output_root: /groups/gai51740/RBT3/dinesh_varun/triage/finetuned
   catalog: ../catalogs/RGB/label_catalog.yaml
@@ -22,6 +22,13 @@ dataset:
   modality: RGB
   sources:
   - stabilized
+# RGB false-positive images plus subject labels from the selected stabilized videos.
+subject_check:
+  enabled: true
+  modality: rgb
+  include_existing_subject_labels: true
+  dataset: people_negatives_VK_20261102
+  image_processor_kwargs: {}
 mixture:
   strategy: all_medical_plus_auxiliary
   shuffle: true
@@ -106,6 +113,7 @@ shared:
     use_rslora: false
   data_checks:
     stabilized_coordinates_verified: false
+  # Validation/test inherit stabilized-only dataset.sources.
   evaluation:
     max_new_tokens: 1024
     generation:
@@ -116,8 +124,6 @@ shared:
       min_p: 0.0
       presence_penalty: 0.0
       repetition_penalty: 1.0
-    sources: [native, stabilized]
-    aggregation: equal_source_macro_f1
   seed: 42
   data_loading:
     dataloader_num_workers: 4
@@ -151,6 +157,10 @@ sft:
     health_check:
       every_n_steps: 100
       max_examples: 32
+      stop_on_deterioration:
+        loss_factor: 2.0
+        loss_delta: 0.5
+        consecutive_checks: 2
     lr_scheduler_type: cosine
     optim: adamw_torch_fused
     logging_steps: 1

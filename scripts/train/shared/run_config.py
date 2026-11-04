@@ -39,17 +39,18 @@ def reject_secrets(value):
 def validate_run_fields(config):
     if not isinstance(config, dict):
         raise ValueError('Run YAML must be a mapping')
+    optional = ' subject_check' if 'subject_check' in config else ''
     version = config.get('schema_version')
     if type(version) is not int or version not in (1, 2):
         raise ValueError('schema_version must be 1 (legacy) or 2')
     if version == 1:
-        fields(config, TOP_LEVEL, 'run YAML')
+        fields(config, TOP_LEVEL + optional, 'run YAML')
         return
     recipe = config.get('recipe')
     sections = {'sft': 'sft', 'rl_only': 'rl', 'sft_then_rl': 'sft rl sft_run'}
     if recipe not in sections:
         raise ValueError('recipe must be sft, rl_only, or sft_then_rl')
-    required = RUN_FIELDS + ' ' + sections[recipe]
+    required = RUN_FIELDS + ' ' + sections[recipe] + optional
     # Resolved snapshots pin catalog values; editable templates contain none of these.
     if any(key in config for key in ('model_settings', 'cloud', 'wandb')):
         required += ' model_settings cloud wandb'
@@ -177,6 +178,12 @@ def compile_run(config):
     validate_experiment(experiment, sft=c['recipe'] != 'rl_only' or c['schema_version'] == 1)
     experiment['dataset'] = dict(modality='RGB', sources={k: k in c['dataset']['sources'] for k in ('native', 'stabilized')})
     experiment['mixture'] = deepcopy(c['mixture'])
+    from scripts.train.shared.config import validate_subject_check
+    if 'subject_check' in c:
+        experiment['subject_check'] = deepcopy(c['subject_check'])
+    validate_subject_check(experiment)
+    if experiment.get('subject_check', {}).get('enabled') and c['recipe'] != 'sft':
+        raise ValueError('subject_check currently requires recipe: sft')
     # Validate the declared task policy before applying dataset-source eligibility.
     all_sources = deepcopy(experiment)
     all_sources['dataset']['sources'] = {'native': True, 'stabilized': True}

@@ -4,14 +4,19 @@ import torch
 
 
 def prepare_video_prompt(collator, examples):
-    """Use the SFT processor, spatial budget, and mandatory-frame sampler for RL."""
+    """Use native SFT media processing for RL and evaluation prompts."""
     if not examples:
-        raise ValueError('A video prompt batch cannot be empty')
+        raise ValueError('A media prompt batch cannot be empty')
     prompt = collator.prompt_batch(examples)
-    if 'pixel_values_videos' not in prompt or prompt['pixel_values_videos'].numel() == 0:
-        raise ValueError('Video processor did not produce native-video tensors')
+    media_types = {("video" if row.get("media_type") is None else row["media_type"]) for row in examples}
+    if len(media_types) != 1 or not media_types <= {"image", "video"}:
+        raise ValueError("Prompt batches require one supported media_type")
+    media = next(iter(media_types))
+    field = "pixel_values" if media == "image" else "pixel_values_videos"
+    if field not in prompt or prompt[field].numel() == 0:
+        raise ValueError(f"Processor did not produce native-{media} tensors")
     if prompt['input_ids'].shape[1] >= collator.max_length:
-        raise ValueError('Video prompt leaves no context space for a completion')
+        raise ValueError('Media prompt leaves no context space for a completion')
     return prompt
 
 
