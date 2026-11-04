@@ -303,9 +303,41 @@ def frozen_split_membership(split_dir, catalog_path):
     return membership
 
 
+def split_reference_paths(split_dir):
+    """Keep CoT training references; use its frozen human parent for evaluation."""
+    directory = Path(split_dir)
+    paths = {name: directory / (name + '.jsonl')
+             for name in ('train', 'validation', 'test')}
+    summary_path = directory / 'summary.json'
+    if not summary_path.is_file():
+        return paths
+    summary = read_json(summary_path)
+    if summary.get('answer_format') != 'cot':
+        return paths
+    if summary.get('parent_split') != '../answer_only':
+        raise ValueError('CoT evaluation requires its frozen answer-only parent split')
+    parent = directory.parent / 'answer_only'
+    if directory.is_symlink() or parent.is_symlink():
+        raise ValueError('CoT parent split must not be a symlink')
+    expected = summary.get('parent_split_sha256', {})
+    for name in ('train.jsonl', 'validation.jsonl', 'test.jsonl', 'summary.json'):
+        path = parent / name
+        if path.is_symlink() or not path.is_file() or expected.get(name) != sha256(path):
+            raise ValueError(f'CoT parent split changed or is missing: {name}')
+    for name in ('validation', 'test'):
+        paths[name] = parent / (name + '.jsonl')
+    return paths
+
+
 def load_splits(root, split_dir, catalog_path, prompts_path, sources=None, evaluation_sources=None):
     catalog, templates = read_yaml(catalog_path), read_yaml(prompts_path)
+    reference_paths = split_reference_paths(split_dir)
     membership = frozen_split_membership(split_dir, catalog_path)
+    parent_dir = reference_paths['validation'].parent
+    if parent_dir != Path(split_dir):
+        parent_membership = frozen_split_membership(parent_dir, catalog_path)
+        if membership != parent_membership or parent_membership is None:
+            raise ValueError('CoT parent split membership differs from the selected release')
     rejected = set() if membership is not None else reject_pairs(root)
     cache, result, owners, seen = {}, {}, {}, set()
     for split in ("train", "validation", "test"):
@@ -313,7 +345,7 @@ def load_splits(root, split_dir, catalog_path, prompts_path, sources=None, evalu
         if split != "train" and evaluation_sources is not None:
             split_sources = {name: name in evaluation_sources for name in DATASETS}
         rows = []
-        path = Path(split_dir) / (split + ".jsonl")
+        path = reference_paths[split]
         for line in path.read_text().splitlines():
             if not line.strip():
                 continue

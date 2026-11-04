@@ -65,6 +65,57 @@
         "litellm": "1.106.4",
         "google-genai": "2.33.0"
       }
+    },
+    "4dd57aee9e22ce5c4b22fe22a2d288beea4922d8f9886570fa917612fc279fc3": {
+      "implementation": {
+        "source_cache.py": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+        "medical.py": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+        "preflight.py": "c93b3ffa10cc6bb6c15e0071483a2b1e4aaf130a625cb1fd4838de6fc82bd2d0",
+        "evidence_media.py": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+        "gemini_media.py": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+        "quality.py": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+        "generate.py": "ff05023aea6d274980de8020d725bcf130b0a816752308860d67a0ea6980bca6",
+        "preview.py": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+        "request_runtime.py": "7205b8b4a202a2f3d035bcc589d404ce95cb3cfc9781ecbedc195cad16ce5b25"
+      },
+      "libraries": {
+        "litellm": "1.106.4",
+        "google-genai": "2.33.0"
+      }
+    },
+    "d00af033eabb93fbcdc8f6a1146432f499beb5b9db8d5f93ab164ab93bdf1629": {
+      "implementation": {
+        "source_cache.py": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+        "medical.py": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+        "preflight.py": "5e0d0b8156a94e94c605122567f62fd9fc04e51b2bea9601259058bfb0f40c90",
+        "evidence_media.py": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+        "gemini_media.py": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+        "quality.py": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+        "generate.py": "39dbd2665ec0debe95574071e401b7a6d85f3924c9313f5b75d5aa2a59e10cec",
+        "preview.py": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+        "request_runtime.py": "7205b8b4a202a2f3d035bcc589d404ce95cb3cfc9781ecbedc195cad16ce5b25"
+      },
+      "libraries": {
+        "litellm": "1.106.4",
+        "google-genai": "2.33.0"
+      }
+    },
+    "a0bb630eb60eada6a60b71018253a4846518cf4c92e8e3a0f9da426e61ce09f7": {
+      "implementation": {
+        "source_cache.py": "44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba",
+        "medical.py": "79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad",
+        "preflight.py": "c93b3ffa10cc6bb6c15e0071483a2b1e4aaf130a625cb1fd4838de6fc82bd2d0",
+        "evidence_media.py": "3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5",
+        "gemini_media.py": "85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0",
+        "quality.py": "8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d",
+        "generate.py": "ab8117d3dfe41b6b47d3ab7b6645186452ea3be6d7a1e09d816bdfeca3f7a7a3",
+        "preview.py": "f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe",
+        "request_runtime.py": "e451a35848c4b2fcb0c7766ec0731bfc5ebf14aed1799e88ad100cfb1f6a7d3b"
+      },
+      "libraries": {
+        "litellm": "1.106.4",
+        "google-genai": "2.33.0"
+      }
     }
   },
   "source_pins": {

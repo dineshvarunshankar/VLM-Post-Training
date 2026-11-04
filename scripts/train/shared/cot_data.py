@@ -116,12 +116,18 @@ def validate_target(path, row, catalog, config, manifest):
     modern = compatibility.known_implementation(implementation)
     if not modern and implementation != current_base:
         raise ValueError(f'Unsupported generator implementation fingerprint {fingerprint(implementation)}; unknown profiles require source compatibility review')
+    from scripts.cot.task_identity import VERSION, task_input_hash, same_task_inputs
+    if 'task_identity_version' in inputs and inputs['task_identity_version'] != VERSION:
+        raise ValueError('Unsupported task identity version')
+    task_scoped = inputs.get('task_identity_version') == VERSION
     selected = config['cot']['accepted_implementation_fingerprints']
-    if modern and selected and fingerprint(implementation) not in selected:
+    if (modern or task_scoped) and selected and fingerprint(implementation) not in selected:
         raise ValueError('Generator implementation is outside configured audited profile selection')
     prompt_path = (compatibility.TEACHER_PROMPTS if modern else GENERATOR / 'yaml/RGB') / (task + '.yaml')
     manifest.pin(compatibility.PROFILE_PATH,dataset=False)
     manifest.pin(Path(compatibility.__file__),dataset=False)
+    if task_scoped and implementation != current_base:
+        raise ValueError('Task-scoped target requires the current audited implementation')
     expected = {
         'video_sha256': sources['video_sha256'],
         'provenance_sha256': sources['provenance_sha256'],
@@ -133,20 +139,31 @@ def validate_target(path, row, catalog, config, manifest):
         if inputs.get('category') != category:
             raise ValueError('Medical category differs from generation inputs')
     for name, value in expected.items():
+        if task_scoped and name in ('provenance_sha256', 'catalog_sha256', 'assessment_prompts_sha256'):
+            continue
         if inputs.get(name) != value:
             raise ValueError(f'Generator/prompt version differs from this checkout: {name}: {path}' if name in ('prompt_sha256','assessment_prompts_sha256') else f'Stale {name}: {path}')
     actual = sources['annotation_sha256']
-    if inputs.get('annotation_sha256') != actual:
+    if not task_scoped and inputs.get('annotation_sha256') != actual:
         raise ValueError(f'Stale annotation_sha256: {path}')
     medical = generator_medical()
     prompt = read_yaml(prompt_path)
-    values, schema, prepared, duration_fields = compatibility.assemble_inputs(folder,variant,category,prompt,modern=modern,medical=medical)
+    values, schema, prepared, duration_fields = compatibility.assemble_inputs(folder,variant,category,prompt,modern=(modern or task_scoped),medical=medical)
     if inputs.get('assembled_input_sha256') != fingerprint(values):
         raise ValueError('Stale assembled_input_sha256: reconstructed teacher inputs differ from generation')
     for name in ('resolved_video_duration_s','duration_source'):
         if inputs.get(name) != duration_fields.get(name):
             raise ValueError(f'Stale {name}: prepared video duration differs from generation')
-    if modern:
+    if task_scoped:
+        rebuilt = dict(inputs, **expected, annotation_sha256=actual,
+                       assembled_input_sha256=fingerprint(values),
+                       task_input_sha256=task_input_hash(prompt, values, schema, prepared))
+        if inputs.get('video_fps_policy') == 'source':
+            meta = read_json(folder / 'all_annotations/meta.json')
+            rebuilt['settings'] = dict(inputs['settings'], video_fps=min(meta['fps'],24.0))
+        if not same_task_inputs(inputs, rebuilt):
+            raise ValueError('Stale task inputs: reconstructed teacher request differs from generation')
+    elif modern:
         rebuilt = dict(inputs, **expected, annotation_sha256=actual,
                        assembled_input_sha256=fingerprint(values),implementation=compatibility.current_implementation())
         for name in ('resolved_video_duration_s','duration_source','video_transport'):
@@ -324,4 +341,13 @@ def pin_split_membership(report, split_dir):
         key = "splits/" + path.name
         files[key] = sha256(path)
         report["source_paths"]["files"][key] = str(path.resolve())
+    from scripts.train.shared.data import split_reference_paths
+    selected = split_reference_paths(split_dir)
+    parent = selected['validation'].parent
+    if parent != Path(split_dir):
+        for name in ('train.jsonl', 'validation.jsonl', 'test.jsonl', 'summary.json'):
+            path = parent / name
+            key = 'splits/parent/' + name
+            files[key] = sha256(path)
+            report['source_paths']['files'][key] = str(path.resolve())
     report["manifest"]["sha256"] = fingerprint(files)

@@ -8,17 +8,25 @@ import sys
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scripts.train.shared.data import category_prompt_values, extract_answers, label_keys, read_yaml
+from scripts.train.shared.data import category_prompt_values, extract_answers, label_keys
 from scripts.train.shared.grounding import frame_index, timestamp, valid_point, video_geometry
 from evidence_media import frame_times, frame_reference
+from source_cache import read_json, read_yaml
 
 REPO = Path(__file__).resolve().parents[2]
 CATALOG = REPO / 'scripts/train/configs/catalogs/RGB/label_catalog.yaml'
 TEMPLATES = REPO / 'scripts/train/prompts/answer_only/RGB/medical_vqa.yaml'
 
 
+def reference_transcript(text):
+    """Represent an absent reference consistently without inventing narration."""
+    if text is not None and not isinstance(text, str):
+        raise ValueError('Reference transcript must be text')
+    return text if text and text.strip() else 'Not provided.'
+
+
 def categories(clip, variant):
-    labels = json.loads((clip / 'all_annotations/labels.json').read_text())
+    labels = read_json(clip / 'all_annotations/labels.json')
     answers, excluded = extract_answers(labels, read_yaml(CATALOG), variant)
     return list(answers), excluded
 
@@ -44,7 +52,7 @@ def formatted_spans(cue, duration, name):
 
 def scene_medical_context(clip, meta, variant):
     """Supply answered category labels as caption consistency context, without evidence locations."""
-    labels = json.loads((clip / 'all_annotations/labels.json').read_text())
+    labels = read_json(clip / 'all_annotations/labels.json')
     catalog = read_yaml(CATALOG)
     answers, excluded = extract_answers(labels, catalog, variant)
     if not answers:
@@ -57,7 +65,7 @@ def scene_medical_context(clip, meta, variant):
         for group in definition['subcategories'].values():
             for label in group['cues']:
                 name = label['name']
-                record = {'label': name, 'definition': label['definition'], 'answer': answer[name]}
+                record = {'label': name, 'answer': answer[name]}
                 if answer[name]:
                     spans = formatted_spans(cues[name], meta['duration_s'], name)
                     if spans:
@@ -68,7 +76,7 @@ def scene_medical_context(clip, meta, variant):
 
 
 def medical_inputs(clip, meta, viewpoint, category, variant, base_schema):
-    labels = json.loads((clip / 'all_annotations/labels.json').read_text())
+    labels = read_json(clip / 'all_annotations/labels.json')
     catalog, templates = read_yaml(CATALOG), read_yaml(TEMPLATES)
     answers, excluded = extract_answers(labels, catalog, variant)
     if category not in answers:
@@ -124,7 +132,7 @@ def medical_inputs(clip, meta, viewpoint, category, variant, base_schema):
             raise ValueError(f'Temporal cue lacks human spans: {name}')
     tracks_path = clip / 'all_annotations/points.json'
     if tracks_path.exists():
-        for row in json.loads(tracks_path.read_text()).get('frames', []):
+        for row in read_json(tracks_path).get('frames', []):
             for track in row.get('parts', []):
                 part = track.get('part', '')
                 name = part.removeprefix('evidence:').split('#')[0]
@@ -162,7 +170,8 @@ def medical_inputs(clip, meta, viewpoint, category, variant, base_schema):
         'category_annotations_json': json.dumps(model_requirements, ensure_ascii=False),
         'evidence_annotations_json': json.dumps(model_evidence, ensure_ascii=False),
         'evidence_frame_manifest_json': json.dumps([frame_reference(frame) for frame in manifest], ensure_ascii=False),
-        'category_transcription': ((annotated.get('narration') or {}).get('transcript') or {}).get('text') or '',
+        'category_transcription': reference_transcript(
+            ((annotated.get('narration') or {}).get('transcript') or {}).get('text')),
         'deployment_answer': json.dumps(answer), 'response_schema_json': json.dumps(schema)}
     return payload, schema, {'expected_answer': answer, 'evidence': evidence,
                             'requirements': requirements, 'evidence_frames': manifest}

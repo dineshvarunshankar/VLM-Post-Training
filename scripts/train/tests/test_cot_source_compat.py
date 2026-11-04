@@ -39,3 +39,25 @@ class SourceCompatibilityTests(unittest.TestCase):
         self.assertFalse(module.compatible_inputs(altered,current))
 
 if __name__=='__main__': unittest.main()
+
+class RestoredSchedulerProfilesTests(unittest.TestCase):
+    def test_registered_scheduler_profiles_keep_semantic_checks(self):
+        from scripts.train.shared import cot_source_compat as compat
+        from scripts.train.shared.data import read_json
+        from scripts.train.shared.cot_data import fingerprint
+        profiles=read_json(compat.PROFILE_PATH)['profiles']
+        for key in ('4dd57aee9e22ce5c4b22fe22a2d288beea4922d8f9886570fa917612fc279fc3','d00af033eabb93fbcdc8f6a1146432f499beb5b9db8d5f93ab164ab93bdf1629','a0bb630eb60eada6a60b71018253a4846518cf4c92e8e3a0f9da426e61ce09f7'):
+            with self.subTest(profile=key):
+                self.assertIn(key,profiles)
+                implementation=profiles[key]['implementation']
+                self.assertEqual(fingerprint(implementation),key)
+                old={'implementation':implementation,'video_sha256':'v','annotation_sha256':{'labels.json':'a'},'assembled_input_sha256':'i','prompt_sha256':'p'}
+                current=dict(old,implementation=compat.current_implementation())
+                self.assertTrue(compat.known_implementation(implementation))
+                self.assertTrue(compat.compatible_inputs(old,current))
+                for field in ('video_sha256','annotation_sha256','assembled_input_sha256','prompt_sha256'):
+                    bad=dict(old);bad[field]='changed'
+                    self.assertFalse(compat.compatible_inputs(bad,current))
+                bad_impl=dict(implementation);bad_impl['medical.py']='0'*64
+                self.assertFalse(compat.known_implementation(bad_impl))
+                self.assertFalse(compat.compatible_inputs(dict(old,implementation=bad_impl),current))
