@@ -16,13 +16,20 @@ def validate_policy(policy):
         number(stop['patience'], 'continuation.early_stopping.patience', integer=True, strict=True)
         number(stop.get('threshold', 0.0), 'continuation.early_stopping.threshold')
         return
-    if not isinstance(policy, dict) or set(policy) != {'scheduler', 'start_learning_rate'}:
+    if (not isinstance(policy, dict) or not {'scheduler', 'start_learning_rate'} <= set(policy)
+            or set(policy) - {'scheduler', 'start_learning_rate', 'early_stopping'}):
         raise ValueError('continuation requires scheduler and start_learning_rate')
     if policy['scheduler'] != 'cosine_tail':
         raise ValueError('continuation scheduler must be cosine_tail')
     lr = policy['start_learning_rate']
     if lr is not None and (type(lr) not in (int, float) or not math.isfinite(lr) or lr <= 0):
         raise ValueError('continuation start_learning_rate must be null or positive and finite')
+    if 'early_stopping' in policy:
+        from scripts.train.shared.contracts import keys, number
+        stop = policy['early_stopping']
+        keys(stop, 'patience', 'continuation.early_stopping', 'threshold')
+        number(stop['patience'], 'continuation.early_stopping.patience', integer=True, strict=True)
+        number(stop.get('threshold', 0.0), 'continuation.early_stopping.threshold')
 
 
 def _normalize_training(previous, current):
@@ -49,6 +56,16 @@ def _normalize_training(previous, current):
     normalized = deepcopy(current)
     normalized.pop('continuation')
     normalized['num_train_epochs'] = old_epochs
+    if 'early_stopping' in policy:
+        old_stop, new_stop = previous.get('early_stopping'), current.get('early_stopping')
+        if (new_stop != policy['early_stopping'] or (old_stop is not None and
+                (new_stop['patience'] < old_stop['patience']
+                 or new_stop.get('threshold', 0.0) != old_stop.get('threshold', 0.0)))):
+            raise ValueError('Tail stopping override must match its policy and preserve existing threshold/patience')
+        if 'early_stopping' in previous:
+            normalized['early_stopping'] = deepcopy(old_stop)
+        else:
+            normalized.pop('early_stopping')
     if normalized != previous:
         raise ValueError('Continuation may change only num_train_epochs and its explicit policy')
     return deepcopy(previous)
@@ -200,6 +217,26 @@ def validate_checkpoint(checkpoint, *, fsdp=False, world_size=None, require_heal
         elif ('continuation_schema' not in scheduler and policy['start_learning_rate'] is not None
                 and state.get('max_steps') != step):
             raise ValueError('Explicit continuation LR requires a completed, exhausted schedule')
+        if policy['scheduler'] == 'cosine_tail':
+            if ('continuation_schema' in scheduler
+                    and scheduler.get('end_step') != state.get('max_steps')):
+                raise ValueError('Saved continuation horizon differs from trainer max_steps')
+            stop = policy.get('early_stopping')
+            if scheduler.get('policy', {}).get('early_stopping') is not None and stop is None:
+                raise ValueError('Saved continuation early-stopping policy cannot be removed')
+            if stop is not None:
+                callback = state.get('stateful_callbacks', {}).get('EarlyStoppingCallback')
+                if callback is None:
+                    if scheduler.get('policy', {}).get('early_stopping') is not None:
+                        raise ValueError('Saved continuation early-stopping callback is missing')
+                else:
+                    args, attributes = callback.get('args', {}), callback.get('attributes', {})
+                    patience = args.get('early_stopping_patience')
+                    counter = attributes.get('early_stopping_patience_counter')
+                    if (type(patience) is not int or patience <= 0 or patience > stop['patience']
+                            or args.get('early_stopping_threshold', 0.0) != stop.get('threshold', 0.0)
+                            or type(counter) is not int or not 0 <= counter < stop['patience']):
+                        raise ValueError('Saved early-stopping state is incompatible with the tail override')
     if require_weights:
         validate_model_weights(checkpoint, fsdp=fsdp)
     if scheduler.get('last_epoch') != step:
@@ -274,6 +311,9 @@ class ContinuationMixin:
                 resume_from_checkpoint, fsdp=self.is_fsdp_enabled, world_size=self.args.world_size,
                 require_health=bool(getattr(self, "health_policy", None)),
                 require_weights=True, policy=self.continuation_policy)
+            if ('early_stopping' in self.continuation_policy
+                    and not self.args.restore_callback_states_from_checkpoint):
+                raise ValueError('Stopping override requires native callback-state restoration')
             if self.continuation_policy['scheduler'] == 'preserve':
                 state = json.loads((Path(resume_from_checkpoint) / 'trainer_state.json').read_text())
                 self._preserved_max_steps = state['max_steps']
@@ -316,7 +356,7 @@ class ContinuationMixin:
 
     def _load_callback_state(self):
         super()._load_callback_state()
-        if self.continuation_policy is None or self.continuation_policy['scheduler'] != 'preserve':
+        if self.continuation_policy is None or 'early_stopping' not in self.continuation_policy:
             return
         from transformers import EarlyStoppingCallback
         callbacks = [c for c in self.callback_handler.callbacks if isinstance(c, EarlyStoppingCallback)]
@@ -325,3 +365,7 @@ class ContinuationMixin:
         policy = self.continuation_policy['early_stopping']
         callbacks[0].early_stopping_patience = policy['patience']
         callbacks[0].early_stopping_threshold = policy.get('threshold', 0.0)
+        # Trainer replaces its callback registry with the saved state on resume.
+        # Register only the explicitly introduced callback so the next save can serialize it.
+        if 'EarlyStoppingCallback' not in self.state.stateful_callbacks:
+            self.state.stateful_callbacks['EarlyStoppingCallback'] = callbacks[0].state()

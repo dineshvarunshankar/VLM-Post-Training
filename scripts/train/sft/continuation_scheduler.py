@@ -34,7 +34,9 @@ class CosineTailScheduler(LRScheduler):
         step = state.get('last_epoch')
         if type(step) is not int or not 0 < step < self.end_step:
             raise ValueError('Continuation horizon must follow the saved scheduler step')
-        if 'continuation_schema' in state:
+        completed_tail = ('continuation_schema' in state and state.get('end_step') == step
+                          and self.end_step > step)
+        if 'continuation_schema' in state and not completed_tail:
             if (state['continuation_schema'] != 1 or state.get('end_step') != self.end_step
                     or state.get('policy') != self.policy):
                 raise ValueError('Saved continuation policy or horizon differs')
@@ -42,6 +44,15 @@ class CosineTailScheduler(LRScheduler):
             if type(anchor_step) is not int or not 0 < anchor_step <= step:
                 raise ValueError('Invalid saved continuation anchor step')
         else:
+            if completed_tail:
+                validate_policy(state.get('policy'))
+                if (state['continuation_schema'] != 1
+                        or state['policy']['scheduler'] != 'cosine_tail'
+                        or type(state.get('anchor_step')) is not int
+                        or not 0 < state['anchor_step'] < step
+                        or self.policy['start_learning_rate'] is None
+                        or state.get('_last_lr') != [0] * len(self.optimizer.param_groups)):
+                    raise ValueError('New tail requires a completed zero-LR continuation and explicit LR')
             anchor_step = step
             lrs = [group['lr'] for group in self.optimizer.param_groups]
             override = self.policy['start_learning_rate']
@@ -58,7 +69,7 @@ class CosineTailScheduler(LRScheduler):
         self.base_lrs = state['base_lrs']
         self.restored = True
         self._last_lr = self.get_lr()
-        if 'continuation_schema' in state:
+        if 'continuation_schema' in state and not completed_tail:
             saved_lrs = [group['lr'] for group in self.optimizer.param_groups]
             if any(not math.isclose(actual, expected, rel_tol=1e-12, abs_tol=0)
                    for actual, expected in zip(saved_lrs, self._last_lr)):
