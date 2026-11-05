@@ -59,7 +59,7 @@ def _normalize_cot_repository_paths(previous, normalized):
         raise ValueError(error)
     manifest = new_mixture.get('manifest')
     if (not isinstance(manifest, dict) or manifest != old_mixture.get('manifest')
-            or set(manifest) != {'schema_version', 'files', 'sha256'}
+            or not {'schema_version', 'files', 'sha256'} <= set(manifest)
             or manifest['schema_version'] != 1 or not isinstance(manifest['files'], dict)):
         raise ValueError(error)
     files = manifest['files']

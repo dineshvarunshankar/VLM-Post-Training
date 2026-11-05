@@ -324,8 +324,8 @@ def test_direct_metadata_entrypoint_rejects_unrelated_change_and_keeps_original(
         save_run_metadata(args, output, {'generation': dict(do_sample=False, temperature=1., top_p=1., top_k=0, min_p=0., presence_penalty=0., repetition_penalty=1.)}, dict(config, training=changed), changed, {}, {'train': [{'label': 'different'}]})
 
 
-@pytest.fixture
-def cot_relocation_metadata(tmp_path, monkeypatch):
+@pytest.fixture(params=[False, True], ids=['plain_cot', 'subject_cot'])
+def cot_relocation_metadata(tmp_path, monkeypatch, request):
     """Exercise the real metadata writer with the CoT source-report contract."""
     import hashlib
     from types import SimpleNamespace
@@ -352,12 +352,24 @@ def cot_relocation_metadata(tmp_path, monkeypatch):
                                          'dataset/clip.mp4': str(tmp_path / 'data/clip.mp4'),
                                          'splits/train.jsonl': str(tmp_path / 'train.jsonl'),
                                          'subject_check/train.jsonl': str(tmp_path / 'subject/train.jsonl')}}}
+    if request.param:
+        from scripts.train.shared.subject_check_evaluation import pin_subject_check_manifest
+        report['subject_check'] = {
+            'manifest_sha256': hashlib.sha256(b'subject manifest').hexdigest(),
+            'summary_sha256': hashlib.sha256(b'subject summary').hexdigest(),
+            'prompt_sha256': hashlib.sha256(b'subject prompt').hexdigest(),
+            'split_sha256': {name: hashlib.sha256(name.encode()).hexdigest()
+                             for name in ('train', 'validation', 'test')},
+        }
+        pin_subject_check_manifest(report, tmp_path / 'data', tmp_path)
     args = SimpleNamespace(model='gemma4-12b-it', run_location={'recipe': 'sft_only', 'answer_format': 'cot'},
                            resume=None, catalog=tmp_path / 'catalog.yaml', prompts=tmp_path / 'prompts.yaml',
                            split_dir=tmp_path)
     train = {'num_train_epochs': 5, 'learning_rate': 2e-5, 'lr_scheduler_type': 'cosine'}
     config = {'answer_format': 'cot', 'training': train, 'evaluation': {'max_new_tokens': 10},
               'cot': {'thinking_token_budget': 0, 'medical_max_new_tokens': 1032, 'caption_max_new_tokens': 16}}
+    if request.param:
+        config['subject_check'] = {'enabled': True}
     model = {'generation': dict(do_sample=False, temperature=1., top_p=1., top_k=0, min_p=0.,
                                presence_penalty=0., repetition_penalty=1.)}
     output = tmp_path / 'output'
@@ -388,7 +400,7 @@ def test_cot_metadata_entrypoint_allows_verified_checkout_relocation(cot_relocat
 @pytest.mark.parametrize('change', [
     'manifest_hash', 'manifest_key', 'missing_manifest', 'dataset_root', 'dataset_path',
     'split_path', 'subject_path', 'relative_path', 'outside_root', 'missing_mapping',
-    'unmanifested_mapping', 'relative_root', 'changed_file', 'symlink_file',
+    'unmanifested_mapping', 'relative_root', 'changed_file', 'symlink_file', 'subject_prompt_hash',
 ])
 def test_cot_checkout_relocation_rejects_other_source_changes(cot_relocation_metadata, change):
     save, relocated, output, original = cot_relocation_metadata
@@ -422,6 +434,8 @@ def test_cot_checkout_relocation_rejects_other_source_changes(cot_relocation_met
         source = Path(paths['files'][key])
         source.unlink()
         source.symlink_to(output.parent / 'old-checkout/scripts/cot/medical.py')
+    elif change == 'subject_prompt_hash':
+        relocated['manifest']['subject_check_prompt_sha256'] = 'f' * 64
     with pytest.raises(ValueError):
         save(relocated)
     assert (output / 'run.json').read_bytes() == original
