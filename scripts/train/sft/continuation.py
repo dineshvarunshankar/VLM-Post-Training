@@ -7,6 +7,15 @@ from pathlib import Path
 
 
 def validate_policy(policy):
+    if isinstance(policy, dict) and policy.get('scheduler') == 'preserve':
+        if set(policy) != {'scheduler', 'early_stopping'}:
+            raise ValueError('Preserved schedule requires only an early_stopping override')
+        from scripts.train.shared.contracts import keys, number
+        stop = policy['early_stopping']
+        keys(stop, 'patience', 'continuation.early_stopping', 'threshold')
+        number(stop['patience'], 'continuation.early_stopping.patience', integer=True, strict=True)
+        number(stop.get('threshold', 0.0), 'continuation.early_stopping.threshold')
+        return
     if not isinstance(policy, dict) or set(policy) != {'scheduler', 'start_learning_rate'}:
         raise ValueError('continuation requires scheduler and start_learning_rate')
     if policy['scheduler'] != 'cosine_tail':
@@ -22,6 +31,18 @@ def _normalize_training(previous, current):
     policy = current.get('continuation')
     validate_policy(policy)
     old_epochs, new_epochs = previous['num_train_epochs'], current['num_train_epochs']
+    if policy['scheduler'] == 'preserve':
+        old_stop, new_stop = previous.get('early_stopping'), current.get('early_stopping')
+        if (not isinstance(old_stop, dict) or new_stop != policy['early_stopping']
+                or new_epochs != old_epochs or new_stop['patience'] <= old_stop['patience']
+                or new_stop.get('threshold', 0.0) != old_stop.get('threshold', 0.0)):
+            raise ValueError('Preserved schedule permits only increased early-stopping patience at the same horizon')
+        normalized = deepcopy(current)
+        normalized.pop('continuation')
+        normalized['early_stopping'] = old_stop
+        if normalized != previous:
+            raise ValueError('Preserved schedule may change only early-stopping patience and its explicit policy')
+        return deepcopy(previous)
     if (type(new_epochs) not in (int, float) or not math.isfinite(new_epochs)
             or new_epochs <= old_epochs):
         raise ValueError('Continuation requires an increased num_train_epochs')
@@ -162,7 +183,21 @@ def validate_checkpoint(checkpoint, *, fsdp=False, world_size=None, require_heal
     scheduler = torch.load(checkpoint / 'scheduler.pt', map_location='cpu', weights_only=True)
     if policy is not None:
         validate_policy(policy)
-        if ('continuation_schema' not in scheduler and policy['start_learning_rate'] is not None
+        if policy['scheduler'] == 'preserve':
+            if ('continuation_schema' in scheduler or type(state.get('max_steps')) is not int
+                    or state['max_steps'] <= step):
+                raise ValueError('Preserved schedule requires an unfinished native training horizon')
+            callback = state.get('stateful_callbacks', {}).get('EarlyStoppingCallback')
+            if not isinstance(callback, dict):
+                raise ValueError('Preserved schedule requires saved early-stopping callback state')
+            args, attributes = callback.get('args', {}), callback.get('attributes', {})
+            saved_patience, counter = args.get('early_stopping_patience'), attributes.get('early_stopping_patience_counter')
+            if (type(saved_patience) is not int or saved_patience <= 0
+                    or saved_patience > policy['early_stopping']['patience']
+                    or args.get('early_stopping_threshold', 0.0) != policy['early_stopping'].get('threshold', 0.0)
+                    or type(counter) is not int or not 0 <= counter < policy['early_stopping']['patience']):
+                raise ValueError('Saved early-stopping state is incompatible with the patience override')
+        elif ('continuation_schema' not in scheduler and policy['start_learning_rate'] is not None
                 and state.get('max_steps') != step):
             raise ValueError('Explicit continuation LR requires a completed, exhausted schedule')
     if require_weights:
@@ -226,7 +261,7 @@ def make_scheduler(optimizer, end_step, policy):
 
 
 class ContinuationMixin:
-    """Keep the native checkpoint restoration path, replacing only its LR schedule."""
+    """Restore native state with an explicit epoch or stopping-policy override."""
     continuation_policy = None
 
     def train(self, resume_from_checkpoint=None, *args, **kwargs):
@@ -239,10 +274,19 @@ class ContinuationMixin:
                 resume_from_checkpoint, fsdp=self.is_fsdp_enabled, world_size=self.args.world_size,
                 require_health=bool(getattr(self, "health_policy", None)),
                 require_weights=True, policy=self.continuation_policy)
+            if self.continuation_policy['scheduler'] == 'preserve':
+                state = json.loads((Path(resume_from_checkpoint) / 'trainer_state.json').read_text())
+                self._preserved_max_steps = state['max_steps']
+                if not self.args.restore_callback_states_from_checkpoint:
+                    raise ValueError('Patience override requires native callback-state restoration')
         return super().train(resume_from_checkpoint=resume_from_checkpoint, *args, **kwargs)
 
     def create_scheduler(self, num_training_steps, optimizer=None):
         if self.continuation_policy is None:
+            return super().create_scheduler(num_training_steps, optimizer)
+        if self.continuation_policy['scheduler'] == 'preserve':
+            if num_training_steps != self._preserved_max_steps:
+                raise ValueError('Preserved scheduler horizon differs from saved max_steps')
             return super().create_scheduler(num_training_steps, optimizer)
         if num_training_steps <= self._continuation_resume_step:
             raise ValueError('Continuation horizon must follow saved global_step')
@@ -259,6 +303,25 @@ class ContinuationMixin:
         super()._load_optimizer_and_scheduler(checkpoint)
         if self.continuation_policy is not None:
             scheduler = self.lr_scheduler
+            if self.continuation_policy['scheduler'] == 'preserve':
+                if scheduler.last_epoch != self._continuation_resume_step:
+                    raise ValueError('Preserved scheduler step differs from saved global_step')
+                if [group['lr'] for group in self.optimizer.param_groups] != scheduler.get_last_lr():
+                    raise ValueError('Preserved optimizer LR differs from saved scheduler LR')
+                self.continuation_schedule = scheduler.state_dict()
+                return
             if not scheduler.restored or scheduler.last_epoch != self._continuation_resume_step:
                 raise ValueError('Continuation scheduler step differs from saved global_step')
             self.continuation_schedule = scheduler.state_dict()
+
+    def _load_callback_state(self):
+        super()._load_callback_state()
+        if self.continuation_policy is None or self.continuation_policy['scheduler'] != 'preserve':
+            return
+        from transformers import EarlyStoppingCallback
+        callbacks = [c for c in self.callback_handler.callbacks if isinstance(c, EarlyStoppingCallback)]
+        if len(callbacks) != 1:
+            raise ValueError('Patience override requires exactly one restored EarlyStoppingCallback')
+        policy = self.continuation_policy['early_stopping']
+        callbacks[0].early_stopping_patience = policy['patience']
+        callbacks[0].early_stopping_threshold = policy.get('threshold', 0.0)
