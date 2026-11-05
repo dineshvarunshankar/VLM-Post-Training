@@ -45,6 +45,69 @@ def validate_launch_extension(previous, current):
         raise ValueError('Continuation launch configuration differs beyond epochs, policy or server endpoint')
 
 
+def _normalize_cot_repository_paths(previous, normalized):
+    """Compare relocated, byte-identical CoT sources without rewriting provenance."""
+    if (previous['config'].get('answer_format') != 'cot'
+            or normalized['config'].get('answer_format') != 'cot'):
+        return
+    old_mixture, new_mixture = previous.get('mixture', {}), normalized.get('mixture', {})
+    old_paths, new_paths = old_mixture.get('source_paths'), new_mixture.get('source_paths')
+    if old_paths == new_paths:
+        return
+    error = 'CoT continuation permits only verified repository checkout relocation'
+    if not isinstance(old_paths, dict) or not isinstance(new_paths, dict):
+        raise ValueError(error)
+    manifest = new_mixture.get('manifest')
+    if (not isinstance(manifest, dict) or manifest != old_mixture.get('manifest')
+            or set(manifest) != {'schema_version', 'files', 'sha256'}
+            or manifest['schema_version'] != 1 or not isinstance(manifest['files'], dict)):
+        raise ValueError(error)
+    files = manifest['files']
+    if (any(not isinstance(key, str) or not isinstance(digest, str) for key, digest in files.items())
+            or hashlib.sha256(json.dumps(files, sort_keys=True, ensure_ascii=False,
+                                         allow_nan=False).encode()).hexdigest() != manifest['sha256']):
+        raise ValueError(error)
+    mappings = [paths.get('files') for paths in (old_paths, new_paths)]
+    if any(not isinstance(mapping, dict) for mapping in mappings) or set(mappings[0]) != set(mappings[1]):
+        raise ValueError(error)
+    repository_keys = {key for key in files if key.startswith('repository/')}
+    if (not repository_keys or any(not isinstance(key, str) for key in mappings[0])
+            or {key for key in mappings[0] if key.startswith('repository/')} != repository_keys):
+        raise ValueError(error)
+    roots = []
+    try:
+        for paths in (old_paths, new_paths):
+            value = paths.get('repository_root')
+            if not isinstance(value, str):
+                raise ValueError(error)
+            root = Path(value)
+            if not root.is_absolute() or str(root) != value or '..' in root.parts or root.resolve() != root:
+                raise ValueError(error)
+            roots.append(root)
+        for key in repository_keys:
+            relative_text = key.removeprefix('repository/')
+            relative = Path(relative_text)
+            if (not relative_text or relative.is_absolute() or relative.as_posix() != relative_text
+                    or relative_text == '.' or '..' in relative.parts):
+                raise ValueError(error)
+            old_file, new_file = (root / relative for root in roots)
+            if mappings[0][key] != str(old_file) or mappings[1][key] != str(new_file):
+                raise ValueError(error)
+            if new_file.resolve(strict=True) != new_file or not new_file.is_file():
+                raise ValueError(error)
+            with new_file.open('rb') as stream:
+                if hashlib.file_digest(stream, 'sha256').hexdigest() != files[key]:
+                    raise ValueError(error)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(error) from exc
+    # Only the comparison copy changes. The continuation record keeps actual new paths.
+    new_paths['repository_root'] = old_paths['repository_root']
+    for key in repository_keys:
+        new_paths['files'][key] = old_paths['files'][key]
+    if new_paths != old_paths:
+        raise ValueError(error)
+
+
 def validate_metadata_extension(previous, current):
     normalized = deepcopy(current)
     normalized['config']['training'] = _normalize_training(previous['config']['training'], current['config']['training'])
@@ -52,6 +115,7 @@ def validate_metadata_extension(previous, current):
     if 'launch_config' in previous or 'launch_config' in current:
         validate_launch_extension(previous.get('launch_config'), current.get('launch_config', {}))
         normalized['launch_config'] = deepcopy(previous['launch_config'])
+    _normalize_cot_repository_paths(previous, normalized)
     if normalized != previous:
         raise ValueError('Continuation metadata, data, model, prompts or runtime differ from run.json')
 

@@ -324,6 +324,110 @@ def test_direct_metadata_entrypoint_rejects_unrelated_change_and_keeps_original(
         save_run_metadata(args, output, {'generation': dict(do_sample=False, temperature=1., top_p=1., top_k=0, min_p=0., presence_penalty=0., repetition_penalty=1.)}, dict(config, training=changed), changed, {}, {'train': [{'label': 'different'}]})
 
 
+@pytest.fixture
+def cot_relocation_metadata(tmp_path, monkeypatch):
+    """Exercise the real metadata writer with the CoT source-report contract."""
+    import hashlib
+    from types import SimpleNamespace
+    from scripts.train.shared.cot_data import fingerprint
+    from scripts.train.shared.runtime import save_run_metadata
+
+    monkeypatch.delenv('TRIAGE_RUN_CONFIG', raising=False)
+    for name in ('catalog.yaml', 'prompts.yaml', 'train.jsonl'):
+        (tmp_path / name).write_text('')
+    old_root, new_root = tmp_path / 'old-checkout', tmp_path / 'new-checkout'
+    relative = 'scripts/cot/medical.py'
+    for root in (old_root, new_root):
+        source = root / relative
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b'identical audited source\n')
+    files = {'repository/' + relative: hashlib.sha256(b'identical audited source\n').hexdigest(),
+             'dataset/clip.mp4': hashlib.sha256(b'video').hexdigest(),
+             'splits/train.jsonl': hashlib.sha256(b'').hexdigest(),
+             'subject_check/train.jsonl': hashlib.sha256(b'subject').hexdigest()}
+    report = {'schema_version': 1, 'release_ready': True,
+              'manifest': {'schema_version': 1, 'files': files, 'sha256': fingerprint(files)},
+              'source_paths': {'repository_root': str(old_root), 'dataset_root': str(tmp_path / 'data'),
+                               'files': {'repository/' + relative: str(old_root / relative),
+                                         'dataset/clip.mp4': str(tmp_path / 'data/clip.mp4'),
+                                         'splits/train.jsonl': str(tmp_path / 'train.jsonl'),
+                                         'subject_check/train.jsonl': str(tmp_path / 'subject/train.jsonl')}}}
+    args = SimpleNamespace(model='gemma4-12b-it', run_location={'recipe': 'sft_only', 'answer_format': 'cot'},
+                           resume=None, catalog=tmp_path / 'catalog.yaml', prompts=tmp_path / 'prompts.yaml',
+                           split_dir=tmp_path)
+    train = {'num_train_epochs': 5, 'learning_rate': 2e-5, 'lr_scheduler_type': 'cosine'}
+    config = {'answer_format': 'cot', 'training': train, 'evaluation': {'max_new_tokens': 10},
+              'cot': {'thinking_token_budget': 0, 'medical_max_new_tokens': 1032, 'caption_max_new_tokens': 16}}
+    model = {'generation': dict(do_sample=False, temperature=1., top_p=1., top_k=0, min_p=0.,
+                               presence_penalty=0., repetition_penalty=1.)}
+    output = tmp_path / 'output'
+    save_run_metadata(args, output, model, config, train, {}, {'train': []}, report)
+    original = (output / 'run.json').read_bytes()
+    args.resume = full_checkpoint(output)
+    changed = dict(train, num_train_epochs=8, continuation=POLICY)
+    relocated = copy.deepcopy(report)
+    relocated['source_paths']['repository_root'] = str(new_root)
+    relocated['source_paths']['files']['repository/' + relative] = str(new_root / relative)
+
+    def save(value):
+        return save_run_metadata(args, output, model, dict(config, training=changed), changed,
+                                 {}, {'train': []}, value)
+    return save, relocated, output, original
+
+
+def test_cot_metadata_entrypoint_allows_verified_checkout_relocation(cot_relocation_metadata):
+    save, relocated, output, original = cot_relocation_metadata
+    record = save(relocated)
+    assert (output / 'run.json').read_bytes() == original
+    assert record['metadata']['mixture']['source_paths'] == relocated['source_paths']
+    saved = json.loads(next((output / 'continuations').glob('*.json')).read_text())
+    assert saved['metadata']['mixture']['source_paths']['repository_root'].endswith('/new-checkout')
+    assert saved['metadata']['mixture']['manifest'] == json.loads(original)['mixture']['manifest']
+
+
+@pytest.mark.parametrize('change', [
+    'manifest_hash', 'manifest_key', 'missing_manifest', 'dataset_root', 'dataset_path',
+    'split_path', 'subject_path', 'relative_path', 'outside_root', 'missing_mapping',
+    'unmanifested_mapping', 'relative_root', 'changed_file', 'symlink_file',
+])
+def test_cot_checkout_relocation_rejects_other_source_changes(cot_relocation_metadata, change):
+    save, relocated, output, original = cot_relocation_metadata
+    paths = relocated['source_paths']
+    key = 'repository/scripts/cot/medical.py'
+    if change == 'manifest_hash':
+        relocated['manifest']['files'][key] = 'f' * 64
+    elif change == 'manifest_key':
+        relocated['manifest']['files']['repository/extra.py'] = 'f' * 64
+    elif change == 'missing_manifest':
+        del relocated['manifest']
+    elif change == 'dataset_root':
+        paths['dataset_root'] += '-changed'
+    elif change in ('dataset_path', 'split_path', 'subject_path'):
+        changed_key = {'dataset_path': 'dataset/clip.mp4', 'split_path': 'splits/train.jsonl',
+                       'subject_path': 'subject_check/train.jsonl'}[change]
+        paths['files'][changed_key] += '-changed'
+    elif change == 'relative_path':
+        paths['files'][key] = str(Path(paths['repository_root']) / 'different.py')
+    elif change == 'outside_root':
+        paths['files'][key] = str(Path(paths['repository_root']) / '../scripts/cot/medical.py')
+    elif change == 'missing_mapping':
+        del paths['files'][key]
+    elif change == 'unmanifested_mapping':
+        paths['files']['repository/extra.py'] = str(Path(paths['repository_root']) / 'extra.py')
+    elif change == 'relative_root':
+        paths['repository_root'] = 'relative-checkout'
+    elif change == 'changed_file':
+        Path(paths['files'][key]).write_bytes(b'changed bytes with unchanged claimed manifest')
+    elif change == 'symlink_file':
+        source = Path(paths['files'][key])
+        source.unlink()
+        source.symlink_to(output.parent / 'old-checkout/scripts/cot/medical.py')
+    with pytest.raises(ValueError):
+        save(relocated)
+    assert (output / 'run.json').read_bytes() == original
+    assert not (output / 'continuations').exists()
+
+
 def test_tracking_continuation_requires_original_id(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from scripts.train.shared.tracking import configure_tracking
