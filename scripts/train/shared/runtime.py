@@ -192,10 +192,10 @@ def save_run_metadata(
         if "continuation" in config.get("training", {}):
             from scripts.train.sft.continuation import save_continuation_metadata
             return save_continuation_metadata(previous_path, run, args.resume)
-        if previous != run:
-            raise ValueError(
-                "Resume configuration, prompts, or split files differ from run.json"
-            )
+        from scripts.train.sft.continuation import validate_metadata_resume
+        validate_metadata_resume(previous, run)
+        # A native resume never replaces the original experiment provenance.
+        return None
     if config.get("answer_format")=="cot":
         atomic_json(output / "cot_generation_policy.json",run["generation_budget_policy"])
     atomic_json(output / "run.json", run)

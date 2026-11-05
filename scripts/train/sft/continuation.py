@@ -146,6 +146,14 @@ def _normalize_cot_repository_paths(previous, normalized):
         raise ValueError(error)
 
 
+def validate_metadata_resume(previous, current):
+    """Allow only verified CoT checkout relocation for an unchanged experiment."""
+    normalized = deepcopy(current)
+    _normalize_cot_repository_paths(previous, normalized)
+    if normalized != previous:
+        raise ValueError('Resume configuration, prompts, or split files differ from run.json')
+
+
 def validate_metadata_extension(previous, current):
     normalized = deepcopy(current)
     normalized['config']['training'] = _normalize_training(previous['config']['training'], current['config']['training'])
