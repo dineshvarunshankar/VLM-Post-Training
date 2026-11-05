@@ -57,6 +57,28 @@ def scheduler_identity(scheduler, environment):
     return rank, job
 
 
+def configure_server_endpoint(run, master, *, replica_file=None):
+    """Keep experiment identity immutable when runtime endpoints are supplied."""
+    if not replica_file:
+        run['execution']['vllm_server_url'] = f'http://{master}:8000'
+
+
+def allocation_metadata(nodes, server_arguments, *, replica_file=None):
+    all_gpus = bool(replica_file)
+    return {
+        'reserved_gpus': nodes * 8, 'training_gpus': nodes * 8,
+        'evaluation_gpus': nodes * 8 if all_gpus else nodes,
+        'evaluation_mode': 'all' if all_gpus else 'legacy',
+        'evaluation_replicas_file': replica_file,
+        'evaluation_replicas': 8 if all_gpus else 1,
+        'evaluation_tensor_parallel_size': nodes,
+        'evaluation_placement': ('all allocated GPUs, shared sequentially with training' if all_gpus else
+            ('first node GPUs 4,5, shared sequentially with training' if nodes == 2 else
+             'GPU 4, shared sequentially with training')),
+        'idle_training_gpus': 0, 'server_arguments': server_arguments,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=('prepare', 'train', 'server-arguments'))
@@ -87,7 +109,7 @@ def main():
             raise ValueError('PBS node allocation does not match the configured training ranks')
         if args.expected_model and run['model'] != args.expected_model:
             raise ValueError('Run model does not match the selected PSC batch script')
-        run['execution']['vllm_server_url'] = f'http://{args.master}:8000'
+        configure_server_endpoint(run, args.master, replica_file=os.environ.get('TRIAGE_EVAL_REPLICAS_FILE'))
         if not dotenv_values(run['env_file']).get('WANDB_API_KEY'):
             raise ValueError('Project .env needs your WANDB_API_KEY; shared-account login is not used')
         plan = compile_run(run)
@@ -108,11 +130,9 @@ def main():
         root.mkdir(parents=True, exist_ok=False)
         write_bundle(plan, root / 'bundle')
         atomic_json(root / 'plan.json', plan)
-        atomic_json(root / 'allocation.json', {
-            'reserved_gpus': nodes * 8, 'training_gpus': nodes * 8, 'evaluation_gpus': 2 if nodes == 2 else 1,
-            'evaluation_placement': 'first node GPUs 4,5, shared sequentially with training' if nodes == 2 else 'GPU 4, shared sequentially with training',
-            'idle_training_gpus': 0, 'server_arguments': evaluation_arguments(run, args.scheduler),
-        })
+        atomic_json(root / 'allocation.json', allocation_metadata(
+            nodes, evaluation_arguments(run, args.scheduler),
+            replica_file=os.environ.get('TRIAGE_EVAL_REPLICAS_FILE')))
         print('PSC_LAUNCH_PREFLIGHT_PASSED', flush=True)
     else:
         plan = json.loads((root / 'plan.json').read_text())

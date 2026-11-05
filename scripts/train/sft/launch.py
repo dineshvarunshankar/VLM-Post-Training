@@ -319,16 +319,33 @@ def main():
     from scripts.train.shared.vllm import feature_configuration
     from scripts.train.rl.rollout.client import VideoRolloutClient
     from scripts.train.shared.config import evaluation_request_timeout
-    client = VideoRolloutClient(args.vllm_server_url, args.vllm_model_name,
-                               api_key=os.environ.get("VLLM_API_KEY"),
-                               timeout=evaluation_request_timeout(config))
-    client.check_compatibility()
-    if config.get('subject_check', {}).get('enabled'):
-        client.check_image_compatibility()
-    if config.get('answer_format')=='cot' or config.get('subject_check', {}).get('enabled'):
-        from scripts.train.shared.cot_budget import PARSERS
-        from scripts.train.shared.cot_format import model_family
-        client.check_cot_schema_compatibility(PARSERS[model_family(checkpoint_config)])
+    from scripts.train.shared.eval_replicas import replica_plan_from_environment, replica_for_rank
+    replica_plan = replica_plan_from_environment(int(os.environ.get('WORLD_SIZE', '1')))
+    if replica_plan is not None and not args.vllm_gpu_sharing:
+        raise ValueError('Replicated evaluation requires shared GPU lifecycle')
+    endpoints = ([item['url'] for item in replica_plan['replicas']]
+                 if replica_plan is not None else [args.vllm_server_url])
+    clients = [VideoRolloutClient(url, args.vllm_model_name,
+                                 api_key=os.environ.get('VLLM_API_KEY'),
+                                 timeout=evaluation_request_timeout(config)) for url in endpoints]
+    def check_endpoints():
+        for endpoint in clients:
+            endpoint.check_compatibility()
+            if config.get('subject_check', {}).get('enabled'):
+                endpoint.check_image_compatibility()
+            if config.get('answer_format') == 'cot' or config.get('subject_check', {}).get('enabled'):
+                from scripts.train.shared.cot_budget import PARSERS
+                from scripts.train.shared.cot_format import model_family
+                endpoint.check_cot_schema_compatibility(PARSERS[model_family(checkpoint_config)])
+    if replica_plan is not None:
+        from accelerate import PartialState
+        from scripts.train.shared.distributed_local_work import run_local_work
+        runtime_state = PartialState()
+        run_local_work('replica compatibility', check_endpoints)
+        client = clients[replica_for_rank(replica_plan, runtime_state.process_index)['replica_id']]
+    else:
+        check_endpoints()
+        client = clients[0]
     args.continuation_policy = train_args.get("continuation")
     if args.continuation_policy is not None:
         if not args.resume:
@@ -344,7 +361,7 @@ def main():
     if args.vllm_gpu_sharing:
         from accelerate import PartialState
         from scripts.train.shared.eval_lifecycle import SharedEvaluationServer
-        evaluation_lifecycle = SharedEvaluationServer(client, PartialState())
+        evaluation_lifecycle = SharedEvaluationServer(clients if replica_plan is not None else client, PartialState())
         # Distributed state is ready; no model weights have been loaded yet.
         evaluation_lifecycle.initialize()
     from scripts.train.shared.tracking import configure_tracking, add_tracking_metadata
@@ -375,6 +392,8 @@ def main():
         lifecycle=evaluation_lifecycle,
         **evaluator_options,
     )
+    if replica_plan is not None:
+        evaluator.request_batch_size = replica_plan["request_batch_size"]
     trainer = MedicalSFTTrainer(
         callbacks=callbacks,
         model=model,

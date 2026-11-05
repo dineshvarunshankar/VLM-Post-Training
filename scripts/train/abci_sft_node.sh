@@ -17,11 +17,23 @@ if [[ ${1:-} != inside ]]; then
   mkdir -p "$job_root/home-$rank" "$local_cache"
   export SINGULARITY_TMPDIR="$local_cache"
   exec singularity exec --cleanenv --nv --home "$job_root/home-$rank:$job_root/home-$rank" -B /groups:/groups -B "$PBS_LOCALDIR:$PBS_LOCALDIR" \
-    "$image" bash "$repo/scripts/train/abci_sft_node.sh" inside "$repo" "$config" "$job_root" "$master" "$job" "$rank" "$nodes" "$local_cache" \
+    "$image" bash "$repo/scripts/train/abci_sft_node.sh" inside "$repo" "$config" "$job_root" "$master" "$job" "$rank" "$nodes" "$local_cache" "${TRIAGE_EVAL_REPLICAS:-all}" \
     > "$job_root/node-$rank.log" 2>&1
 fi
 shift
 repo=$1; config=$2; job_root=$3; master=$4; job=$5; rank=$6; nodes=$7; local_cache=${8:?Scheduler scratch path is missing}
+eval_mode=${9:-all}
+[[ "$eval_mode" == all || "$eval_mode" == legacy ]] || { echo 'TRIAGE_EVAL_REPLICAS must be all or legacy.' >&2; exit 2; }
+export TRIAGE_EVAL_REPLICAS="$eval_mode"
+if [[ "$eval_mode" == all ]]; then
+  export TRIAGE_EVAL_REPLICAS_FILE="$job_root/eval-replicas.json"
+else
+  unset TRIAGE_EVAL_REPLICAS_FILE
+fi
+# Publish failures for peer nodes even before the Python supervisor starts.
+trap 'status=$?; if (( status != 0 )); then touch "$job_root/eval-node-$rank.failed"; fi' EXIT
+hostname > "$job_root/node-$rank.host.tmp"
+mv "$job_root/node-$rank.host.tmp" "$job_root/node-$rank.host"
 work=$(cd "$repo/../.." && pwd)
 cd "$repo"
 export PBS_JOBID="$job" TRIAGE_NODE_RANK="$rank"
@@ -57,11 +69,25 @@ assert torch.isfinite(y).all() and torch.isfinite(x.grad).all() and torch.isfini
 CHECK
 fi
 if [[ "$rank" == 0 ]]; then
+  if [[ "$eval_mode" == all ]]; then
+    deadline=$((SECONDS + 3600))
+    hosts=()
+    for ((node=0; node<nodes; node++)); do
+      while [[ ! -f "$job_root/node-$node.host" ]]; do
+        [[ ! -f "$job_root/eval-node-$node.failed" ]] || exit 1
+        (( SECONDS < deadline )) || { echo 'Timed out waiting for node hostnames.' >&2; exit 1; }
+        sleep 2
+      done
+      hosts+=("$(cat "$job_root/node-$node.host")")
+    done
+    python -m scripts.train.psc.eval_servers --manifest "$TRIAGE_EVAL_REPLICAS_FILE" --hosts "${hosts[@]}"
+  fi
   python -m scripts.train.psc.launch prepare --scheduler pbs --allocated-nodes "$nodes" --expected-model "$model" --config "$config" --job-root "$job_root/run" --master "$master"
 fi
 # Node zero publishes this only after successful preflight and bundle creation.
 deadline=$((SECONDS + 3600))
 while [[ ! -f "$job_root/run/plan.json" ]]; do
+  [[ ! -f "$job_root/eval-node-0.failed" ]] || exit 1
   (( SECONDS < deadline )) || { echo 'Timed out waiting for launch preflight.' >&2; exit 1; }
   sleep 2
 done
@@ -84,6 +110,14 @@ if [[ "$rank" == 0 ]]; then
   eval_devices=4; eval_tensor_parallel=1
   [[ "$nodes" == 1 ]] || { eval_devices=4,5; eval_tensor_parallel=2; }
   eval_util=$(python -c 'import torch;print(63*2**30/torch.cuda.get_device_properties(4).total_memory)')
+  if [[ "$eval_mode" == all ]]; then
+    python - "$job_root/eval-profile.json" "$weights" "$eval_util" "$limits" "$kwargs" "$job_root/server-arguments.txt" <<'PROFILE'
+import json, sys
+from scripts.train.psc.eval_servers import atomic_json
+atomic_json(sys.argv[1], dict(weights=sys.argv[2], utilization=float(sys.argv[3]),
+    limits=sys.argv[4], kwargs=sys.argv[5], extra_arguments=open(sys.argv[6]).read().splitlines()))
+PROFILE
+  else
   CUDA_VISIBLE_DEVICES="$eval_devices" VLLM_SERVER_DEV_MODE=1 vllm serve "$weights" "${reasoning_args[@]}" \
     --enable-sleep-mode --enforce-eager --served-model-name "$model" --host 0.0.0.0 --port 8000 --dtype bfloat16 \
     --tensor-parallel-size "$eval_tensor_parallel" --max-num-seqs 1 --gpu-memory-utilization "$eval_util" \
@@ -99,11 +133,25 @@ if [[ "$rank" == 0 ]]; then
     sleep 5
   done
   touch "$job_root/server-ready"
-else
+  fi
+elif [[ "$eval_mode" == legacy ]]; then
   deadline=$((SECONDS + 3600))
   while [[ ! -f "$job_root/server-ready" ]]; do
     (( SECONDS < deadline )) || { echo 'Timed out waiting for evaluation server.' >&2; exit 1; }
     sleep 5
   done
 fi
-python -m scripts.train.psc.launch train --scheduler pbs --config "$config" --job-root "$job_root/run" --master "$master"
+if [[ "$eval_mode" == all ]]; then
+  deadline=$((SECONDS + 3600))
+  while [[ ! -f "$job_root/eval-profile.json" ]]; do
+    [[ ! -f "$job_root/eval-node-0.failed" ]] || exit 1
+    (( SECONDS < deadline )) || { echo 'Timed out waiting for evaluation profile.' >&2; exit 1; }
+    sleep 2
+  done
+  python -m scripts.train.psc.eval_servers --manifest "$TRIAGE_EVAL_REPLICAS_FILE" \
+    --node-rank "$rank" --plan "$job_root/run/plan.json" --profile "$job_root/eval-profile.json" \
+    --job-root "$job_root" --cache-root "$local_cache/eval" -- \
+    python -m scripts.train.psc.launch train --scheduler pbs --config "$config" --job-root "$job_root/run" --master "$master"
+else
+  python -m scripts.train.psc.launch train --scheduler pbs --config "$config" --job-root "$job_root/run" --master "$master"
+fi

@@ -18,13 +18,17 @@ def release_cuda_cache():
 
 class SharedEvaluationServer:
     def __init__(self, client, state, *, release_memory=release_cuda_cache):
-        self.client = client
+        self.clients = client if isinstance(client, list) else [client]
+        self.client = self.clients[0]
         self.state = state
         self.release_memory = release_memory
         self.initialized = False
 
     def phase(self, label, operation, *, main_only=False):
         """Complete a phase everywhere before any rank advances or raises."""
+        if main_only and len(self.clients) > 1:
+            from scripts.train.shared.distributed_local_work import run_local_work
+            return run_local_work(label, lambda: self._control_all(operation))
         error = None
         result = None
         try:
@@ -45,6 +49,19 @@ class SharedEvaluationServer:
             ranks = ', '.join(str(item['rank']) for item in failures)
             raise RuntimeError(f'Shared evaluation {label} failed on rank(s) {ranks}') from error
         return result
+
+    def _control_all(self, operation):
+        if not self.state.is_main_process:
+            return None
+        failures = []
+        for client in self.clients:
+            self.client = client
+            try:
+                operation()
+            except Exception as error:
+                failures.append(error)
+        if failures:
+            raise RuntimeError('Replicated evaluation control failed') from failures[0]
 
     def _request(self, method, path, *, params=None, json_body=False):
         try:
@@ -72,8 +89,16 @@ class SharedEvaluationServer:
         self._assert_sleeping(True)
 
     def initialize(self):
-        self.phase('sleep API check', self._check_api, main_only=True)
-        self.phase('startup sleep', self._sleep, main_only=True)
+        try:
+            self.phase('sleep API check', self._check_api, main_only=True)
+            self.phase('startup sleep', self._sleep, main_only=True)
+        except BaseException as error:
+            if len(self.clients) > 1:
+                try:
+                    self.phase('sleep after startup failure', self._sleep, main_only=True)
+                except Exception as cleanup_error:
+                    error.add_note(f'Also failed to return replicas to sleep: {cleanup_error}')
+            raise
         self.initialized = True
 
     @contextmanager
