@@ -8,8 +8,8 @@ from scripts.train.shared.eval_replicas import load_replica_plan, replica_for_ra
 
 def manifest(world=8):
     tp = world // 8
-    return dict(schema_version=1, training_world_size=world, request_batch_size=2,
-                max_num_seqs=4, replicas=[dict(replica_id=i, node_rank=i*tp//8,
+    return dict(schema_version=1, training_world_size=world, request_batch_size=1,
+                max_num_seqs=1, replicas=[dict(replica_id=i, node_rank=i*tp//8,
                 devices=list(range(i*tp%8, i*tp%8+tp)), url=f'http://node{i*tp//8}:{8000+i}',
                 group_port=51216+i, sender_rank=i*tp//8*8+(i*tp%8+tp)%8) for i in range(8)])
 
@@ -26,6 +26,18 @@ class ReplicaPlanTests(unittest.TestCase):
             plan = self.load(manifest(world), world)
             self.assertEqual([replica_for_rank(plan, r)['replica_id'] for r in range(world)],
                              [r//(world//8) for r in range(world)])
+
+    def test_conservative_profile_and_reject_batching(self):
+        for world in (8, 16):
+            plan = self.load(manifest(world), world)
+            self.assertEqual((plan['request_batch_size'], plan['max_num_seqs']), (1, 1))
+            for field, invalid in (('request_batch_size', 2), ('max_num_seqs', 4),
+                                   ('max_num_seqs', 2), ('max_num_seqs', True)):
+                data = manifest(world)
+                data[field] = invalid
+                with self.subTest(world=world, field=field, invalid=invalid):
+                    with self.assertRaisesRegex(ValueError, field):
+                        self.load(data, world)
 
     def test_reject_invalid(self):
         cases = []

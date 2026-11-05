@@ -20,7 +20,7 @@ def replica_manifest(hosts):
             devices=list(range(first, first + tp)), url=f'http://{hosts[node]}:{8000 + first // tp}',
             group_port=51216 + replica_id, sender_rank=node * 8 + (tp if first == 0 else 0)))
     return dict(schema_version=1, training_world_size=len(hosts) * 8,
-                request_batch_size=2, max_num_seqs=4, replicas=replicas)
+                request_batch_size=1, max_num_seqs=1, replicas=replicas)
 
 
 def server_command(replica, *, weights, model, max_length, utilization, limits, kwargs,

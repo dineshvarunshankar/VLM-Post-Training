@@ -19,7 +19,7 @@ class ReplicaLauncherTests(unittest.TestCase):
         for hosts, tp in ((['one'], 1), (['one', 'two'], 2)):
             plan = servers.replica_manifest(hosts)
             self.assertEqual(plan['training_world_size'], len(hosts) * 8)
-            self.assertEqual((plan['request_batch_size'], plan['max_num_seqs']), (2, 4))
+            self.assertEqual((plan['request_batch_size'], plan['max_num_seqs']), (1, 1))
             self.assertEqual(len(plan['replicas']), 8)
             covered = set()
             for replica in plan['replicas']:
@@ -30,12 +30,13 @@ class ReplicaLauncherTests(unittest.TestCase):
             self.assertEqual(len(covered), len(hosts) * 8)
 
     def test_command_preserves_profile_and_isolates_replica(self):
-        replica = servers.replica_manifest(['one', 'two'])['replicas'][5]
+        plan = servers.replica_manifest(['one', 'two'])
+        replica = plan['replicas'][5]
         command, env = servers.server_command(replica, weights='/weights', model='gemma',
             max_length=8192, utilization=.63, limits='{"video": 1}', kwargs='{"num_frames": 100}',
             extra_arguments=['--reasoning-parser', 'gemma'], cache_root=Path('/cache'),
-            max_num_seqs=4)
-        for flag, value in (('--tensor-parallel-size', '2'), ('--max-num-seqs', '4'),
+            max_num_seqs=plan['max_num_seqs'])
+        for flag, value in (('--tensor-parallel-size', '2'), ('--max-num-seqs', '1'),
                             ('--max-model-len', '8192'), ('--mm-processor-kwargs', '{"num_frames": 100}'),
                             ('--gpu-memory-utilization', '0.63'), ('--port', '8001')):
             self.assertEqual(command[command.index(flag) + 1], value)

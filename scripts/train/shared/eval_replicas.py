@@ -13,7 +13,7 @@ def load_replica_plan(path, world_size=None):
         if not condition:
             raise ValueError('Invalid evaluation replica manifest: ' + message)
     require(isinstance(plan, dict), 'expected object')
-    for key, expected in [('schema_version', 1), ('request_batch_size', 2), ('max_num_seqs', 4)]:
+    for key, expected in [('schema_version', 1), ('request_batch_size', 1), ('max_num_seqs', 1)]:
         require(type(plan.get(key)) is int and plan[key] == expected, key)
     world = plan.get('training_world_size')
     require(type(world) is int and world in (8, 16), 'training_world_size')
