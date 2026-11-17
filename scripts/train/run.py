@@ -93,7 +93,7 @@ def select_resume_stages(plan):
         from scripts.train.sft.continuation import validate_checkpoint, validate_completion_outputs
         validate_checkpoint(checkpoint, fsdp=bool(plan['experiment']['training'].get('fsdp')),
                             world_size=plan['run']['execution']['training_gpus'],
-                            require_health=bool(plan['experiment']['training'].get('health_check')),
+                            require_health=bool((plan['experiment']['training'].get('health_check') or {}).get('stop_on_deterioration')),
                             require_weights=True, policy=plan['experiment']['training']['continuation'])
         validate_completion_outputs(previous_path.parent)
 

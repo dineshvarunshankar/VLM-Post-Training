@@ -7,9 +7,9 @@ Prepare triage video datasets, generate annotations, and train video-language mo
 | Step | Guide | Current support |
 |---|---|---|
 | 1. Prepare videos | [Preprocessing](scripts/preprocess/README.md) | Native and stabilized videos, RGB and thermal |
-| 2. Prepare targets and splits | [Training data](scripts/train/README.md#2-prepare-the-dataset) | Human-answer RGB medical VQA |
-| 3. Train and export | [Training](scripts/train/README.md) | Answer-only SFT, RL-only, and SFT → RL |
-| Optional: generate annotations | [CoT generation](scripts/cot/README.md) | Native RGB scene descriptions. Three other prompts are templates |
+| 2. Prepare targets and splits | [Training data](scripts/train/README.md#prepare-the-dataset) | Human-answer RGB medical VQA |
+| 3. Train and export | [Training](scripts/train/README.md) | Answer-only SFT, RL-only, and SFT → RL; CoT SFT |
+| Optional: generate annotations | [CoT generation](scripts/cot/README.md) | Scene descriptions and medical reasoning for native and stabilized RGB videos |
 
 Answer-only training does not require CoT generation. Full-model GPU validation remains pending.
 The previous Unsloth workflow is in [legacy](legacy/README.md).
@@ -41,7 +41,7 @@ sudo apt-get update
 sudo apt-get install ffmpeg
 ```
 
-Run task commands from the repository root. The training guide includes the additional vLLM installation steps.
+The training guide includes the additional vLLM installation steps.
 
 ## Configuration
 

@@ -124,10 +124,9 @@ def prepare(clip, prompt_path, settings, category=None):
     meta = source_json(annotations / 'meta.json')
     camera = source_json(annotations / 'camera_motion.json')
     counting = source_json(annotations / 'counting.json') if variant == 'native' else None
-    # Eligibility comes from the published manifest. A retained rejected.json
-    # can predate a later completion; it remains part of the provenance checks.
-    if meta.get('annotation_status') not in ('completed', 'completed_minimal'):
-        raise ValueError('Clip annotations are not complete')
+    # Eligibility comes from the published manifest, not copied status flags.
+    # A retained rejected.json can predate a later completion; it remains part
+    # of the provenance checks.
     if meta.get('modality') != 'RGB':
         raise ValueError('Only RGB clips are supported')
     transcript = reference_transcript((meta.get('scene_description') or {}).get('text'))

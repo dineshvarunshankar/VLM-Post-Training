@@ -353,7 +353,7 @@ def main():
         from scripts.train.sft.continuation import validate_checkpoint, validate_completion_outputs
         validate_checkpoint(args.resume, fsdp=bool(train_args.get("fsdp")),
                             world_size=int(os.environ.get("WORLD_SIZE", "1")),
-                            require_health=bool(train_args.get("health_check")),
+                            require_health=bool((train_args.get("health_check") or {}).get("stop_on_deterioration")),
                             require_weights=True, policy=args.continuation_policy)
         validate_completion_outputs(args.resume.resolve().parent.parent)
     output = validate_runtime(args, model_config, answer_format=config.get("answer_format","answer_only"))

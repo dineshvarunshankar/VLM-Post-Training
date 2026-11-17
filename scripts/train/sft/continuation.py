@@ -317,7 +317,7 @@ class ContinuationMixin:
             validate_completion_outputs(Path(self.args.output_dir).parent)
             self._continuation_resume_step = validate_checkpoint(
                 resume_from_checkpoint, fsdp=self.is_fsdp_enabled, world_size=self.args.world_size,
-                require_health=bool(getattr(self, "health_policy", None)),
+                require_health=bool((getattr(self, "health_policy", None) or {}).get("stop_on_deterioration")),
                 require_weights=True, policy=self.continuation_policy)
             if ('early_stopping' in self.continuation_policy
                     and not self.args.restore_callback_states_from_checkpoint):
@@ -346,7 +346,7 @@ class ContinuationMixin:
     def _load_optimizer_and_scheduler(self, checkpoint):
         if self.continuation_policy is not None:
             validate_checkpoint(checkpoint, fsdp=self.is_fsdp_enabled, world_size=self.args.world_size,
-                                require_health=bool(getattr(self, "health_policy", None)),
+                                require_health=bool((getattr(self, "health_policy", None) or {}).get("stop_on_deterioration")),
                                 require_weights=True, policy=self.continuation_policy)
         super()._load_optimizer_and_scheduler(checkpoint)
         if self.continuation_policy is not None:

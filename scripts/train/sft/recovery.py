@@ -43,6 +43,29 @@ class RecoveryCheckpointMixin:
         self._recovery_last_step = None
         self._recovery_saving = False
 
+    def train(self, resume_from_checkpoint=None, *args, **kwargs):
+        # Protected resumes archive future recovery state in the health mixin.
+        # Without that state, reject a rewind before old checkpoints can be reused.
+        if (getattr(self, '_recovery_policy', None) and resume_from_checkpoint
+                and resume_from_checkpoint is not True
+                and getattr(self, '_health_state', None) is None):
+            def validate_rewind():
+                if not self.accelerator.is_main_process:
+                    return
+                saved = Path(resume_from_checkpoint) / 'trainer_state.json'
+                step = json.loads(saved.read_text())['global_step']
+                if type(step) is not int or step < 0:
+                    raise ValueError('Resume checkpoint requires a nonnegative global_step')
+                root = Path(self.args.output_dir).parent / 'recovery'
+                future = [path for path in root.glob('checkpoint-*')
+                          if path.is_dir() and path.name.removeprefix('checkpoint-').isdigit()
+                          and int(path.name.removeprefix('checkpoint-')) > step]
+                if future:
+                    raise ValueError('Explicit resume would collide with future recovery checkpoints; '
+                                     'preserve them outside the active recovery directory before resuming')
+            _save_phase(validate_rewind)
+        return super().train(resume_from_checkpoint=resume_from_checkpoint, *args, **kwargs)
+
     def health_recovery_checkpoint(self, step):
         """Return only a complete native checkpoint for the specified update."""
         if type(step) is not int or step <= 0:

@@ -1,6 +1,7 @@
 """Task input identity; source integrity is checked separately before reuse."""
 import hashlib
 import json
+from pathlib import Path
 
 VERSION = 1
 # These broad source records remain in generation.inputs for audit and race checks.
@@ -37,13 +38,23 @@ def same_task_inputs(previous, current):
             or current.get('task_identity_version') != VERSION
             or not previous.get('task_input_sha256') or not current.get('task_input_sha256')):
         return False
+    # This eligibility-only upgrade preserves requests already accepted on main.
+    old, new = previous.get('implementation', {}), current.get('implementation', {})
+    if (isinstance(old, dict) and isinstance(new, dict)
+            and old.get('generate.py') == 'cad3c3107ea1bee36a78dd9457e009e9a48950bb95a7158921cc7bec9679cba3'
+            and old.get('task_identity.py') == '958f7ee38dfc6034ba7109dca27fffaa8385d2d07022737c2a35bd6a162740b1'
+            and new.get('generate.py') == APPROVED_GENERATOR
+            and new.get('task_identity.py') == hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+            and {k:v for k,v in old.items() if k not in ('generate.py', 'task_identity.py')}
+                == {k:v for k,v in new.items() if k not in ('generate.py', 'task_identity.py')}):
+        current = {**current, 'implementation': old}
     # Compare unknown fields too: newly added dependencies must fail closed.
     return ({k:v for k,v in previous.items() if k not in AUDIT_FIELDS}
             == {k:v for k,v in current.items() if k not in AUDIT_FIELDS})
 
 
 LEGACY_IMPLEMENTATION = {'source_cache.py': '44554c141b47c56ccdb4a4a0c87fb722d6b772e12b98191f66821b11727be1ba', 'medical.py': '79a73834b7112ffbf069f136ebcbb6f706f7d784ac74bdfabe50501bb23be0ad', 'preflight.py': '5e0d0b8156a94e94c605122567f62fd9fc04e51b2bea9601259058bfb0f40c90', 'evidence_media.py': '3515ae5790379f73031aa6a3e1bf5458e281098349d32348f8b800099d0398e5', 'gemini_media.py': '85cd8afffff481fade48120f0c35174da02116e6a9acbfc358ab420155e85ef0', 'quality.py': '8458fbb401bebdfbd5d256fa780d73ad532b798f8a16b5e3b49c017e8049bd8d', 'generate.py': '2ceafdb30b2bdb98157ced412e35261e1a0ea159a2c8c889538e99295090b025', 'preview.py': 'f6c6f0b6cc68d4679a8f0f7ca3c91cddfc4fbeaff02671d2759fd11b0487e5fe', 'transport_media.py': 'c491890308ff0bfae94661996b4f4e9d02e8ceb99d7a8c5b07ef235f3595f0f4', 'request_runtime.py': '7205b8b4a202a2f3d035bcc589d404ce95cb3cfc9781ecbedc195cad16ce5b25'}
-APPROVED_GENERATOR = 'cad3c3107ea1bee36a78dd9457e009e9a48950bb95a7158921cc7bec9679cba3'
+APPROVED_GENERATOR = '7199724c1b1c4eba245e2c39fc2acfa8250a809c7ee4b83ad53ba8afc2fbc57e'
 
 def legacy_current_inputs(current):
     """Bridge this one audited upgrade; keep every legacy dependency check."""
